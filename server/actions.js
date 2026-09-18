@@ -14,6 +14,7 @@ const { duel } = require('./combat');
 const {
   findPlayer, findCastle, findUnit, isPlayersTurn,
   createUnit, removeUnit, killUnit, queueEvent,
+  isPetrified, tickUnitStatuses,
 } = require('./units');
 const {
   tickCreatureSpawn, tickCreatureRegen, attackCreature: attackCreatureInternal,
@@ -56,10 +57,8 @@ function collectGold(state) {
 // hasta `range` pasos, deteniéndose si choca con un castillo en medio del
 // camino (no puede atravesarlo, salvo que sea el destino final).
 const ORTHOGONAL_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-const ALL_DIRS = [
-  [1, 0], [-1, 0], [0, 1], [0, -1],
-  [1, 1], [1, -1], [-1, 1], [-1, -1],
-];
+const DIAGONAL_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+const ALL_DIRS = [...ORTHOGONAL_DIRS, ...DIAGONAL_DIRS];
 
 // Una casilla no es válida como destino/paso si es un hueco, tiene una
 // criatura, o hay una ficha propia en ella (salvo que sea un castillo propio).
@@ -87,6 +86,30 @@ function getLineMoves(state, unit, range, dirs) {
   return moves;
 }
 
+// Movimiento del Dragón: igual que la Reina (8 direcciones) pero sin
+// bloqueo alguno. Cada casilla de cada dirección se evalúa de forma
+// independiente como posible destino (nada detiene el recorrido salvo salir
+// del tablero); solo importa si esa casilla puntual es un destino válido.
+function getUnblockedLineMoves(state, unit, dirs) {
+  dirs = dirs || ALL_DIRS;
+  const moves = [];
+  dirs.forEach(([dx, dy]) => {
+    for (let step = 1; step <= Math.max(state.boardSize, 1); step++) {
+      const x = unit.x + dx * step;
+      const y = unit.y + dy * step;
+      const tile = tileAt(state, x, y);
+      if (!tile) break; // fuera del tablero: no hay más casillas en esta dirección
+      if (tile.type === 'inaccessible') continue; // sobrevuela, no puede aterrizar
+      if (creatureAt(state, x, y)) continue; // sobrevuela, se ataca aparte
+      const other = unitAt(state, x, y);
+      if (other && other.owner === unit.owner && tile.type !== 'castle') continue; // sobrevuela
+      moves.push({ x, y });
+      // sin "break": el Dragón sigue pudiendo aterrizar más lejos en esta dirección
+    }
+  });
+  return moves;
+}
+
 function getKnightMoves(state, unit) {
   const jumps = [
     [1, 2], [2, 1], [-1, 2], [-2, 1],
@@ -104,24 +127,67 @@ function getKnightMoves(state, unit) {
     });
 }
 
-function getReachableTiles(state, unit) {
-  if (unit.type === 'rey') return []; // el Rey nunca puede moverse
-  if (unit.type === 'caballo') return getKnightMoves(state, unit);
-  const range = MOVEMENT_RANGE[unit.type];
-  if (unit.type === 'peon') return getLineMoves(state, unit, range, ORTHOGONAL_DIRS);
-  return getLineMoves(state, unit, range);
+// Movimiento del Grifo: salta directo a las 4 esquinas de un cuadrado de
+// 2x2 casillas a su alrededor (±2, ±2), sin bloqueo por el camino —
+// misma lógica que el salto del Caballo.
+function getGriffinMoves(state, unit) {
+  const jumps = [[2, 2], [2, -2], [-2, 2], [-2, -2]];
+  return jumps
+    .map(([dx, dy]) => ({ x: unit.x + dx, y: unit.y + dy }))
+    .filter((p) => {
+      const tile = tileAt(state, p.x, p.y);
+      if (!tile || tile.type === 'inaccessible') return false;
+      if (creatureAt(state, p.x, p.y)) return false;
+      const other = unitAt(state, p.x, p.y);
+      if (other && other.owner === unit.owner && tile.type !== 'castle') return false;
+      return true;
+    });
 }
 
-function claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY) {
+function getReachableTiles(state, unit) {
+  if (unit.type === 'rey') return []; // el Rey nunca puede moverse
+  if (isPetrified(unit)) return []; // petrificado: no puede moverse
+
+  switch (unit.type) {
+    case 'peon':
+      return getLineMoves(state, unit, 1, ORTHOGONAL_DIRS);
+    case 'caballo':
+      return getKnightMoves(state, unit);
+    case 'alfil':
+      return getLineMoves(state, unit, state.boardSize, DIAGONAL_DIRS);
+    case 'torre':
+      return getLineMoves(state, unit, state.boardSize, ORTHOGONAL_DIRS);
+    case 'reina':
+      return getLineMoves(state, unit, state.boardSize, ALL_DIRS);
+    case 'dragon':
+      return getUnblockedLineMoves(state, unit, ALL_DIRS);
+    case 'fenix':
+      return getLineMoves(state, unit, 2, ALL_DIRS);
+    case 'grifo':
+      return getGriffinMoves(state, unit);
+    default: {
+      const range = MOVEMENT_RANGE[unit.type] || 1;
+      return getLineMoves(state, unit, range);
+    }
+  }
+}
+
+// Tipos cuyo movimiento es un "salto" (ignora el camino intermedio): al
+// reclamar territorio solo se reclama la casilla de destino, nunca el
+// trayecto, incluso cuando ese trayecto sea geométricamente una línea recta
+// (como pasa con el salto en diagonal del Grifo).
+const JUMPING_UNIT_TYPES = new Set(['caballo', 'grifo']);
+
+function claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, isJump = false) {
   const dx = Math.sign(toX - fromX);
   const dy = Math.sign(toY - fromY);
   const distX = Math.abs(toX - fromX);
   const distY = Math.abs(toY - fromY);
-  const isStraightLine = distX === 0 || distY === 0 || distX === distY;
+  const isStraightLine = !isJump && (distX === 0 || distY === 0 || distX === distY);
 
   if (!isStraightLine) {
-    // Movimiento no lineal (salto del Caballo): solo se reclama el destino,
-    // no hay un "camino" recto que trazar.
+    // Movimiento tipo salto (Caballo o Grifo) o no lineal: solo se reclama
+    // el destino, no hay un "camino" recto que trazar.
     const destTile = tileAt(state, toX, toY);
     if (destTile && (destTile.type === 'neutral' || destTile.type === 'territory')) {
       destTile.type = 'territory';
@@ -188,7 +254,7 @@ function occupyCastle(state, unit, castle, playerId, fromX, fromY) {
   unit.movedThisTurn = true;
   castle.owner = playerId;
   castle.garrison.push({ unitId: unit.id });
-  claimTerritoryAlongPath(state, playerId, fromX, fromY, castle.x, castle.y);
+  claimTerritoryAlongPath(state, playerId, fromX, fromY, castle.x, castle.y, JUMPING_UNIT_TYPES.has(unit.type));
 }
 
 // unitId se mueve a (toX, toY). Maneja reclamo de territorio, captura de
@@ -198,6 +264,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
+  if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede moverse');
   if (unit.movedThisTurn) throw new Error('Esa ficha ya se movió este turno');
 
   const reachable = getReachableTiles(state, unit);
@@ -262,7 +329,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
     unit.castleId = destCastle.id;
     unit.movedThisTurn = true;
     destCastle.garrison.push({ unitId: unit.id });
-    claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY);
+    claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, JUMPING_UNIT_TYPES.has(unit.type));
     log = { ...log, event: 'garrisoned', castleId: destCastle.id };
   } else if (enemyUnitAtDest) {
     // Combate en campo abierto.
@@ -276,7 +343,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
       unit.x = toX;
       unit.y = toY;
       unit.movedThisTurn = true;
-      claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY);
+      claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, JUMPING_UNIT_TYPES.has(unit.type));
       log = { ...log, event: 'fieldCombatAttackerWins', attackerHp: unit.hp };
     } else if (res.attackerDied) {
       const kill = killUnit(state, unit);
@@ -303,7 +370,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
     unit.x = toX;
     unit.y = toY;
     unit.movedThisTurn = true;
-    claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY);
+    claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, JUMPING_UNIT_TYPES.has(unit.type));
     if (destTile.type !== 'castle' && destTile.type !== 'farm') destTile.type = 'territory';
     destTile.owner = playerId;
     if (!log.event) log = { ...log, event: 'moved' };
@@ -326,6 +393,7 @@ function attackUnit(state, playerId, unitId, targetId) {
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
+  if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
   if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
 
   const target = findUnit(state, targetId);
@@ -506,12 +574,19 @@ function endTurn(state, playerId) {
     tickCreatureRegen(state);
   }
 
+  // Al empezar el turno del siguiente jugador: veneno inflige daño (puede
+  // matar) y petrificación cuenta regresiva hasta liberar a la ficha.
+  const newCurrentPlayerId = state.turnOrder[state.currentTurnIndex];
+  const statusEvents = tickUnitStatuses(state, newCurrentPlayerId);
+  statusEvents.forEach((evt) => queueEvent(state, evt));
+  state.players.forEach((p) => checkPlayerDefeat(state, p));
+
   const weather = tickWeather(state);
   const spawnedCreature = tickCreatureSpawn(state);
 
   checkVictory(state);
 
-  return { spawnedCreature, weather };
+  return { spawnedCreature, weather, statusEvents };
 }
 
 module.exports = {

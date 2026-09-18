@@ -11,19 +11,31 @@
 
 const { resolveAttack } = require('./combat');
 const { getRandomAccessibleFreeTile } = require('./terrain');
-const { createUnit, findUnit, findPlayer, isPlayersTurn, killUnit } = require('./units');
+const {
+  createUnit, findUnit, findPlayer, isPlayersTurn, killUnit,
+  applyPoison, applyPetrify, isPetrified,
+} = require('./units');
 
 const CREATURE_START_ROUND = 5;
 const CREATURE_INTERVAL_TURNS = 3;
 
-// weight = probabilidad en % (suman 100). Fénix 5%, Hidra 5%; el resto se
-// reajustó respecto a la spec original (50/35/15) para dejarles lugar.
+// weight = probabilidad en % (suman 100). Se reajustó respecto a la spec
+// original para dejarle lugar a grifo, basilisco y medusa.
+//
+// Habilidades especiales (se activan cuando la criatura sobrevive el golpe y
+// contraataca, ver attackCreature):
+//   - Basilisco: envenena a la ficha atacante (daño por turno, ver units.js).
+//   - Medusa: petrifica a la ficha atacante (no puede moverse ni atacar
+//     durante sus próximos turnos).
 const CREATURE_STATS = {
-  lobo:   { atk: 4, hp: 8,  goldReward: 10, weight: 45 },
-  golem:  { atk: 3, hp: 12, goldReward: 14, weight: 32 },
-  dragon: { atk: 5, hp: 15, goldReward: 30, weight: 13, tameable: true },
-  hidra:  { atk: 7, hp: 24, goldReward: 60, weight: 5,  regen: 2 },
-  fenix:  { atk: 4, hp: 10, goldReward: 0,  weight: 5,  tameable: true },
+  lobo:      { atk: 4, hp: 8,  goldReward: 10, weight: 35 },
+  golem:     { atk: 3, hp: 12, goldReward: 14, weight: 25 },
+  dragon:    { atk: 5, hp: 15, goldReward: 30, weight: 10, tameable: true },
+  grifo:     { atk: 4, hp: 13, goldReward: 0,  weight: 10, tameable: true },
+  basilisco: { atk: 5, hp: 14, goldReward: 25, weight: 6,  poison: { damage: 2, turns: 3 } },
+  medusa:    { atk: 4, hp: 16, goldReward: 35, weight: 5,  petrify: { turns: 2 } },
+  hidra:     { atk: 7, hp: 24, goldReward: 60, weight: 5,  regen: 2 },
+  fenix:     { atk: 4, hp: 10, goldReward: 0,  weight: 4,  tameable: true },
 };
 
 function pickCreatureType() {
@@ -88,6 +100,7 @@ function attackCreature(state, playerId, unitId) {
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
+  if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
   if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
 
   const creature = state.activeCreature;
@@ -134,6 +147,19 @@ function attackCreature(state, playerId, unitId) {
     log.event = 'creatureSurvived';
     log.creatureHpRemaining = creature.hp;
     log.attackerHpRemaining = unit.hp;
+
+    // El contraataque de la criatura, si conecta, puede envenenar o
+    // petrificar a la ficha atacante (Basilisco / Medusa).
+    if (result.counter > 0) {
+      const stats = CREATURE_STATS[creature.type];
+      if (stats.poison) {
+        applyPoison(unit, stats.poison.damage, stats.poison.turns);
+        log.statusApplied = 'poison';
+      } else if (stats.petrify) {
+        applyPetrify(unit, stats.petrify.turns);
+        log.statusApplied = 'petrified';
+      }
+    }
   }
 
   return log;

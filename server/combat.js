@@ -16,6 +16,7 @@ const UNIT_STATS = {
   reina:   { atk: 5, hp: 10 },
   dragon:  { atk: 5, hp: 12 }, // tropa domada
   fenix:   { atk: 4, hp: 10 }, // tropa domada, puede resucitar (ver units.js)
+  grifo:   { atk: 4, hp: 11 }, // tropa domada (ver creatures.js)
 };
 
 function statsFor(type) {

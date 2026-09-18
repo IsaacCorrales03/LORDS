@@ -49,6 +49,7 @@ const RANKS = {
   reina: 5,
   dragon: 6, // criatura domada al derrotar al Dragón; no se produce en castillo
   fenix: 7, // criatura domada al derrotar al Fénix; no se produce en castillo
+  grifo: 8, // criatura domada al derrotar al Grifo; no se produce en castillo
 };
 
 const CASTLE_LEVELS = {
@@ -70,17 +71,30 @@ const UNIT_COSTS = {
   reina: 150,
 };
 
-// Alcance de movimiento por tipo de ficha (en casillas, línea recta u 8
-// direcciones salvo el caballo que salta en L como en el ajedrez).
+// Alcance de movimiento por tipo de ficha. La lógica real vive en
+// getReachableTiles (actions.js), que trata cada tipo con su propio patrón;
+// esta tabla queda como referencia/documentación y como valor por defecto
+// para tipos no reconocidos explícitamente.
+//   - peon: 1 casilla, solo ortogonal (arriba/abajo/izquierda/derecha).
+//   - caballo: salto en L, como en el ajedrez (manejado aparte).
+//   - alfil: solo diagonal, sin límite de alcance (hasta chocar).
+//   - torre: solo ortogonal, sin límite de alcance (hasta chocar).
+//   - reina: diagonal + ortogonal, sin límite de alcance (hasta chocar).
+//   - dragon: como la reina, pero sin bloqueo: ignora todo lo que haya en
+//     el camino (fichas, castillos, huecos) y solo importa el destino.
+//   - fenix: como el Rey del ajedrez (8 direcciones), pero 2 casillas.
+//   - grifo: salta a las 4 esquinas de un cuadrado de 2x2 (±2,±2), sin
+//     bloqueo, igual que el caballo.
 const MOVEMENT_RANGE = {
   rey: 0, // el Rey no se mueve: permanece en su castillo
   peon: 1,
   caballo: null, // salto en L, manejado aparte
-  alfil: 3,
-  torre: 4,
-  reina: 5,
-  dragon: 4, // ficha domada; vuela: sobrevuela huecos del mapa
-  fenix: 5, // ficha domada; vuela
+  alfil: Infinity,
+  torre: Infinity,
+  reina: Infinity,
+  dragon: Infinity, // ficha domada; vuela y no se bloquea (ver getUnblockedLineMoves)
+  fenix: 2, // ficha domada; vuela
+  grifo: null, // salto de esquina, manejado aparte
 };
 
 // Tropas voladoras: pueden cruzar (no aterrizar en) casillas inaccesibles.

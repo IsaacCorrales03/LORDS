@@ -19,6 +19,57 @@ function isPlayersTurn(state, playerId) {
   return state.phase === 'playing' && state.turnOrder[state.currentTurnIndex] === playerId;
 }
 
+// --- Estados: veneno (Basilisco) y petrificación (Medusa) ---
+
+function applyPoison(unit, damage, turns) {
+  unit.poison = { damage, turns };
+}
+
+function applyPetrify(unit, turns) {
+  unit.petrified = { turns };
+}
+
+function isPetrified(unit) {
+  return !!(unit.petrified && unit.petrified.turns > 0);
+}
+
+// Se ejecuta al empezar el turno de `playerId`: el veneno inflige daño (y
+// puede matar, con la resurrección del Fénix aplicando si corresponde) y la
+// petrificación reduce su contador, liberando a la ficha cuando llega a 0.
+function tickUnitStatuses(state, playerId) {
+  const events = [];
+  state.units
+    .filter((u) => u.owner === playerId)
+    .forEach((u) => {
+      if (u.poison && u.poison.turns > 0) {
+        u.hp -= u.poison.damage;
+        u.poison.turns -= 1;
+        if (u.poison.turns <= 0) u.poison = null;
+        if (u.hp <= 0) {
+          u.hp = 0;
+          const kill = killUnit(state, u);
+          events.push({
+            type: 'poisonDamage', event: 'poisonKilled',
+            playerId, unitId: u.id, unitType: u.type, revived: kill.revived,
+          });
+        } else {
+          events.push({
+            type: 'poisonDamage', event: 'poisonTick',
+            playerId, unitId: u.id, unitType: u.type, hpRemaining: u.hp,
+          });
+        }
+      }
+      if (u.petrified && u.petrified.turns > 0) {
+        u.petrified.turns -= 1;
+        if (u.petrified.turns <= 0) {
+          u.petrified = null;
+          events.push({ type: 'petrifyWoreOff', event: 'petrifyWoreOff', playerId, unitId: u.id, unitType: u.type });
+        }
+      }
+    });
+  return events;
+}
+
 // Eventos "de fondo" (clima, resurrección, curación...) que index.js vacía
 // hacia el historial después de cada acción.
 function queueEvent(state, evt) {
@@ -112,4 +163,5 @@ module.exports = {
   PHOENIX_REVIVE_COST,
   findPlayer, findCastle, findUnit, isPlayersTurn,
   queueEvent, createUnit, removeUnit, removeUnitFromCastleGarrison, killUnit,
+  applyPoison, applyPetrify, isPetrified, tickUnitStatuses,
 };

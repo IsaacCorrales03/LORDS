@@ -13,6 +13,7 @@ const {
   startGame,
   MIN_PLAYERS,
   MAX_PLAYERS,
+  getActiveCreatures,
 } = require('./gameState');
 const actions = require('./actions');
 
@@ -53,7 +54,7 @@ function serializeState(s) {
     units: s.units,
     farms: s.farms,
     winner: s.winner,
-    activeCreatures: s.activeCreatures,
+    activeCreatures: getActiveCreatures(s),
     activeWeather: s.activeWeather,
     turnCounter: s.turnCounter,
   };
@@ -295,10 +296,10 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('action:attackCreature', ({ unitId }) => {
+  socket.on('action:attackCreature', ({ unitId, creatureId }) => {
     if (!state) return;
     try {
-      const log = actions.attackCreature(state, socket.id, unitId);
+      const log = actions.attackCreature(state, socket.id, unitId, creatureId);
       broadcastState();
       io.emit('action:log', log);
       flushEvents();

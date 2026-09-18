@@ -9,6 +9,7 @@ const {
   FARM_COST,
   FARM_INCOME,
   FLYING_UNITS,
+  getActiveCreatures,
 } = require('./gameState');
 const { duel } = require('./combat');
 const {
@@ -31,7 +32,7 @@ function unitAt(state, x, y) {
 }
 
 function creatureAt(state, x, y) {
-  return state.activeCreatures.find((c) => c.x === x && c.y === y) || null;
+  return getActiveCreatures(state).find((c) => c.x === x && c.y === y) || null;
 }
 
 // --- Fase 1: obtener oro ---
@@ -527,8 +528,8 @@ function upgradeCastle(state, playerId, castleId) {
 }
 
 // --- Criaturas neutrales ---
-function attackCreature(state, playerId, unitId) {
-  return attackCreatureInternal(state, playerId, unitId);
+function attackCreature(state, playerId, unitId, creatureId) {
+  return attackCreatureInternal(state, playerId, unitId, creatureId);
 }
 
 // --- Curación en castillo ---

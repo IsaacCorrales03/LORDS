@@ -270,7 +270,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 100px 0 20px; /* espacio a la derecha para los botones de música/sonido */
   border-bottom: 1px solid var(--panel-border);
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   position: relative;
@@ -1082,3 +1082,76 @@ button:disabled {
 
 .castle-hit { cursor: pointer; }
 .castle-hit:hover { fill: rgba(216,173,92,0.12); }
+
+/* Nuevos climas */
+.acid-drop {
+  fill: #b6f04a; stroke: #e6ffa8; stroke-width: 0.6; opacity: 0;
+  filter: drop-shadow(0 0 3px #9be22d);
+  animation: acid-fall linear infinite;
+}
+@keyframes acid-fall {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 0.95; }
+  100% { transform: translateY(32px); opacity: 0; }
+}
+.acid-bubble {
+  fill: none; stroke: #d4ff7a; stroke-width: 1.4; opacity: 0.8;
+  transform-box: fill-box; transform-origin: center;
+  animation: acid-bubble 2s ease-in-out infinite;
+}
+@keyframes acid-bubble {
+  0%, 100% { transform: scale(0.6); opacity: 0.2; }
+  50% { transform: scale(1.25); opacity: 0.9; }
+}
+.fog-puff {
+  fill: #dfe7ef; opacity: 0.0;
+  animation: fog-drift ease-in-out infinite;
+}
+@keyframes fog-drift {
+  0% { transform: translateX(-6px); opacity: 0; }
+  50% { opacity: 0.4; }
+  100% { transform: translateX(8px); opacity: 0; }
+}
+.quake-crack {
+  fill: none; stroke: #2b1d10; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round;
+  animation: quake-shake 1.2s ease-in-out infinite;
+}
+@keyframes quake-shake {
+  0%, 100% { transform: translate(0, 0); opacity: 0.85; }
+  25% { transform: translate(-1px, 1px); }
+  50% { transform: translate(1px, -1px); opacity: 1; }
+  75% { transform: translate(-1px, -1px); }
+}
+.weather-terremoto .weather-veil { animation-duration: 0.7s; }
+
+/* Rendirse / terminar partida */
+.game-exit-group { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ghost-btn {
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.ghost-btn.danger:hover { color: var(--ember-bright); border-color: var(--ember-bright); }
+.ghost-btn.armed {
+  color: #fff5f0;
+  background: var(--ember);
+  border-color: var(--ember);
+}
+.surrender-tag {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+}

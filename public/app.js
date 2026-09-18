@@ -17,10 +17,41 @@ const CREATURE_INFO = {
   fenix:  { color: '#ffb347', reward: 'Se doma como tropa', note: 'Resucita una vez por jugador (10 de oro, castillo neutral).' },
 };
 const WEATHER_INFO = {
-  electrica: { label: 'Tormenta eléctrica', color: '#f5d84a' },
-  nieve:     { label: 'Ventisca de nieve', color: '#bfe3ff' },
-  arena:     { label: 'Tormenta de arena', color: '#d9a85c' },
+  electrica: { label: 'Tormenta eléctrica', color: '#f5d84a', note: '-1 de vida por turno a quien esté dentro.' },
+  nieve:     { label: 'Ventisca de nieve', color: '#bfe3ff', note: '-1 de vida por turno a quien esté dentro.' },
+  arena:     { label: 'Tormenta de arena', color: '#d9a85c', note: '-1 de vida por turno a quien esté dentro.' },
+  acido:     { label: 'Lluvia ácida', color: '#9be22d', note: '-1 de vida por turno a quien esté dentro.' },
+  niebla:    { label: 'Niebla densa', color: '#a9b7c6', note: '-1 de vida por turno a quien esté dentro.' },
+  terremoto: { label: 'Terremoto', color: '#b58a5a', note: 'Las tropas dentro no pueden moverse.' },
 };
+const WEATHER_FALLBACK = { label: 'Clima', color: '#9fb3c8', note: '-1 de vida por turno a quien esté dentro.' };
+// Nunca devuelve undefined: un tipo de clima desconocido no debe romper el render.
+function weatherInfo(type) { return WEATHER_INFO[type] || WEATHER_FALLBACK; }
+function creatureInfo(type) { return CREATURE_INFO[type] || CREATURE_INFO.lobo; }
+
+// Criaturas activas (el servidor manda un arreglo; se acepta el campo viejo
+// activeCreature por compatibilidad).
+function creaturesOf(state) {
+  if (!state) return [];
+  if (Array.isArray(state.activeCreatures)) return state.activeCreatures;
+  return state.activeCreature ? [state.activeCreature] : [];
+}
+// Mismo cálculo que el servidor: 1 criatura por cada 2 jugadores de la partida.
+function maxCreaturesFor(playerCount) { return Math.ceil(playerCount / 2); }
+
+// El clima ocupa una lista de casillas (w.cells), no un cuadrado fijo.
+function isInWeatherZone(w, x, y) {
+  return !!(w && Array.isArray(w.cells) && w.cells.some((c) => c.x === x && c.y === y));
+}
+function isInQuake(state, unit) {
+  const w = state && state.activeWeather;
+  return !!(w && w.type === 'terremoto' && unit && isInWeatherZone(w, unit.x, unit.y));
+}
+function playerNameOf(id) {
+  const p = currentState && currentState.players.find((pl) => pl.id === id);
+  return p ? p.name : 'Un jugador';
+}
+
 const UNIT_COSTS = { peon: 10, caballo: 30, alfil: 60, torre: 100, reina: 150 };
 const CASTLE_UPGRADE_COST = { 2: 15, 3: 50 };
 const FARM_COST = 20;
@@ -62,7 +93,7 @@ let currentState = null;
 let selectedUnitId = null;
 let selectedCastleId = null;
 let inspectedUnitId = null; // ficha rival/propia ajena vista en el panel, sin seleccionarla
-let inspectedCreature = false; // true si se está inspeccionando la criatura activa
+let inspectedCreatureId = null; // id de la criatura que se ve en el panel (null = ninguna)
 const CASTLE_LEVEL_INFO = {
   1: { goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2 },
   2: { goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3 },
@@ -151,6 +182,8 @@ const harvestBanner = document.getElementById('harvestBanner');
 const eventBanner = document.getElementById('eventBanner');
 const eventBannerDot = document.getElementById('eventBannerDot');
 const eventBannerText = document.getElementById('eventBannerText');
+const btnSurrender = document.getElementById('btnSurrender');
+const btnEndGame = document.getElementById('btnEndGame');
 
 // ================= CONEXIÓN =================
 
@@ -215,6 +248,7 @@ socket.on('state:update', (state) => {
   renderPlayers(state);
   renderWorldInfo(state);
   renderTurnInfo(state);
+  updateExitButtons(state);
   maybeShowTurnBanner(state);
   renderBoard(state);
   renderSelection();
@@ -247,10 +281,13 @@ socket.on('action:buildableFarmTiles', ({ tiles }) => {
   renderSelection();
 });
 
-socket.on('game:over', ({ winner }) => {
+socket.on('game:over', ({ winner, endedByLeader }) => {
   const title = document.getElementById('gameoverTitle');
   const subtitle = document.getElementById('gameoverSubtitle');
-  if (winner === myId) {
+  if (endedByLeader) {
+    title.textContent = 'Partida terminada';
+    subtitle.textContent = 'El líder dio por terminada la partida.';
+  } else if (winner === myId) {
     title.textContent = 'Victoria';
     subtitle.textContent = 'Tu reino se impuso sobre los demás.';
   } else if (winner) {
@@ -262,7 +299,7 @@ socket.on('game:over', ({ winner }) => {
     subtitle.textContent = 'No quedaron reinos en pie.';
   }
   SFX.stopMusic();
-  SFX.play(winner === myId ? 'victory' : 'defeat');
+  if (!endedByLeader) SFX.play(winner === myId ? 'victory' : 'defeat');
   gameoverOverlay.classList.add('active');
 });
 
@@ -357,6 +394,7 @@ function renderPlayers(state) {
       <div class="name-row">
         <span class="swatch" style="background:${PLAYER_COLOR_HEX[p.color] || '#666'}"></span>
         <span>${escapeHtml(p.name)}${p.id === myId ? ' (vos)' : ''}</span>
+        ${p.surrendered ? '<span class="surrender-tag">Rendido</span>' : ''}
       </div>
       <div class="stats">
         <span title="Oro"><svg class="stat-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg> <b class="gold-value" data-player="${p.id}">${castleOrZero(p)}</b></span>
@@ -375,26 +413,29 @@ function renderPlayers(state) {
 function renderWorldInfo(state) {
   const el = document.getElementById('worldInfo');
   if (!el) return;
-  const c = state.activeCreature;
+  const creatures = creaturesOf(state);
+  const maxCreatures = maxCreaturesFor(state.maxPlayers || state.players.length);
   const w = state.activeWeather;
   const nextIn = (state.turnCounter % 3 === 0) ? 3 : 3 - (state.turnCounter % 3);
 
   let html = '';
-  if (c) {
-    const info = CREATURE_INFO[c.type];
+  creatures.forEach((c) => {
+    const info = creatureInfo(c.type);
     html += `<div class="world-card" style="--wc:${info.color}">
-      <div class="wc-head"><svg viewBox="0 0 24 24" fill="${info.color}" color="${info.color}">${unitIconMarkup(c.type)}</svg><b>${UNIT_LABELS[c.type]}</b><span class="wc-stats">${c.atk} ATQ · ${c.hp}/${c.maxHp}</span></div>
+      <div class="wc-head"><svg viewBox="0 0 24 24" fill="${info.color}" color="${info.color}">${unitIconMarkup(c.type)}</svg><b>${UNIT_LABELS[c.type] || c.type}</b><span class="wc-stats">${c.atk} ATQ · ${c.hp}/${c.maxHp}</span></div>
       <div class="sel-hpbar"><i style="width:${Math.round((c.hp / c.maxHp) * 100)}%; background:${hpColor(c.hp / c.maxHp)}"></i></div>
       <div class="wc-note">Botín: ${info.reward}. ${info.note}</div>
     </div>`;
-  } else {
-    html += `<div class="world-card muted"><div class="wc-note">${state.round < 5 ? 'Las criaturas aparecen desde la ronda 5.' : `Próxima criatura en ${nextIn} turno(s).`}</div></div>`;
+  });
+  if (creatures.length < maxCreatures) {
+    html += `<div class="world-card muted"><div class="wc-note">${state.round < 5 ? 'Las criaturas aparecen desde la ronda 5.' : `Próxima criatura en ${nextIn} turno(s) (${creatures.length}/${maxCreatures} en el tablero).`}</div></div>`;
   }
   if (w) {
-    const info = WEATHER_INFO[w.type];
+    const info = weatherInfo(w.type);
+    const n = Array.isArray(w.cells) ? w.cells.length : 0;
     html += `<div class="world-card" style="--wc:${info.color}">
       <div class="wc-head"><b>${info.label}</b><span class="wc-stats">${w.turnsLeft} turno(s)</span></div>
-      <div class="wc-note">Zona 3x3 en (${w.x},${w.y}): -1 de vida por turno a quien esté dentro.</div>
+      <div class="wc-note">Afecta ${n} casillas del tablero. ${info.note}</div>
     </div>`;
   } else {
     html += `<div class="world-card muted"><div class="wc-note">${state.round < 3 ? 'El clima cambia desde la ronda 3.' : `Próximo clima en ${nextIn} turno(s).`}</div></div>`;
@@ -674,7 +715,7 @@ function renderBoard(state) {
     const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
     const owner = state.players.find((p) => p.id === unit.owner);
     const isMine = unit.owner === myId;
-    const canMove = isMine && unit.type !== 'rey' && !unit.movedThisTurn && state.turnOrder[state.currentTurnIndex] === myId;
+    const canMove = isMine && unit.type !== 'rey' && !unit.movedThisTurn && !isInQuake(state, unit) && state.turnOrder[state.currentTurnIndex] === myId;
     const selUnitForAttack = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
     const isAttackable = !isMine && canAttackUnitWith(selUnitForAttack, unit, state);
 
@@ -776,59 +817,98 @@ function spawnFloat(x, y, text, cls) {
   setTimeout(() => t.remove(), 1100);
 }
 
-// Zona 3x3 de clima: velo de color por casilla accesible + partículas animadas.
+// Zona de clima (9 casillas de forma variable): velo de color por casilla
+// accesible + efecto propio de cada tipo + contorno solo por fuera de la zona.
 function renderWeather(state) {
   const w = state.activeWeather;
-  if (!w) return;
-  const info = WEATHER_INFO[w.type] || WEATHER_INFO.electrica;
+  if (!w || !Array.isArray(w.cells)) return;
+  const info = weatherInfo(w.type);
   const g = svgEl('g', {}, `weather weather-${w.type}`);
   g.style.pointerEvents = 'none';
-  for (let dy = 0; dy < w.size; dy++) {
-    for (let dx = 0; dx < w.size; dx++) {
-      const x = w.x + dx;
-      const y = w.y + dy;
-      const tile = state.tiles[y] && state.tiles[y][x];
-      if (!tile || tile.type === 'inaccessible') continue;
-      const px = x * TILE_SIZE;
-      const py = y * TILE_SIZE;
-      const veil = svgEl('rect', { x: px, y: py, width: TILE_SIZE, height: TILE_SIZE }, 'weather-veil');
-      veil.setAttribute('fill', info.color);
-      g.appendChild(veil);
-      const seed = x * 7 + y * 13;
-      if (w.type === 'nieve') {
-        for (let i = 0; i < 4; i++) {
-          const fx = px + 5 + ((seed + i * 9) % (TILE_SIZE - 10));
-          const flake = svgEl('circle', { cx: fx, cy: py + 2, r: 1.4 + (i % 2) * 0.6 }, 'snow-flake');
-          flake.style.animationDuration = `${2 + (i % 3) * 0.6}s`;
-          flake.style.animationDelay = phaseDelay(2.6, i + seed);
-          g.appendChild(flake);
-        }
-      } else if (w.type === 'arena') {
-        for (let i = 0; i < 3; i++) {
-          const ly = py + 8 + ((seed + i * 11) % (TILE_SIZE - 16));
-          const streak = svgEl('line', { x1: px + 2, y1: ly, x2: px + 14, y2: ly }, 'sand-streak');
-          streak.style.animationDuration = `${1.6 + i * 0.3}s`;
-          streak.style.animationDelay = phaseDelay(2, i + seed);
-          g.appendChild(streak);
-        }
-      } else {
-        if ((x + y) % 2 === 0) {
-          const bolt = svgEl('path', { d: `M${px + 22} ${py + 4} L${px + 15} ${py + 21} L${px + 21} ${py + 21} L${px + 16} ${py + 36}` }, 'bolt');
-          bolt.style.animationDelay = phaseDelay(1.4, seed);
-          g.appendChild(bolt);
-        }
+  const T = TILE_SIZE;
+  const inZone = new Set(w.cells.map((c) => `${c.x},${c.y}`));
+
+  w.cells.forEach(({ x, y }) => {
+    const tile = state.tiles[y] && state.tiles[y][x];
+    if (!tile || tile.type === 'inaccessible') return;
+    const px = x * T;
+    const py = y * T;
+    const veil = svgEl('rect', { x: px, y: py, width: T, height: T }, 'weather-veil');
+    veil.setAttribute('fill', info.color);
+    g.appendChild(veil);
+    const seed = x * 7 + y * 13;
+
+    if (w.type === 'nieve') {
+      for (let i = 0; i < 4; i++) {
+        const fx = px + 5 + ((seed + i * 9) % (T - 10));
+        const flake = svgEl('circle', { cx: fx, cy: py + 2, r: 1.4 + (i % 2) * 0.6 }, 'snow-flake');
+        flake.style.animationDuration = `${2 + (i % 3) * 0.6}s`;
+        flake.style.animationDelay = phaseDelay(2.6, i + seed);
+        g.appendChild(flake);
       }
+    } else if (w.type === 'arena') {
+      for (let i = 0; i < 3; i++) {
+        const ly = py + 8 + ((seed + i * 11) % (T - 16));
+        const streak = svgEl('line', { x1: px + 2, y1: ly, x2: px + 14, y2: ly }, 'sand-streak');
+        streak.style.animationDuration = `${1.6 + i * 0.3}s`;
+        streak.style.animationDelay = phaseDelay(2, i + seed);
+        g.appendChild(streak);
+      }
+    } else if (w.type === 'acido') {
+      for (let i = 0; i < 3; i++) {
+        const dx = px + 6 + ((seed + i * 11) % (T - 12));
+        const drop = svgEl('path', { d: `M${dx} ${py} q3 5 0 8 q-3 -3 0 -8 Z` }, 'acid-drop');
+        drop.style.animationDuration = `${1.3 + i * 0.35}s`;
+        drop.style.animationDelay = phaseDelay(1.8, i + seed);
+        g.appendChild(drop);
+      }
+      const bubble = svgEl('circle', { cx: px + 10 + (seed % 20), cy: py + T - 9, r: 3.2 }, 'acid-bubble');
+      bubble.style.animationDelay = phaseDelay(2, seed);
+      g.appendChild(bubble);
+    } else if (w.type === 'niebla') {
+      for (let i = 0; i < 2; i++) {
+        const puff = svgEl('ellipse', {
+          cx: px + 10 + ((seed + i * 7) % 20), cy: py + 12 + i * 15, rx: 12, ry: 6,
+        }, 'fog-puff');
+        puff.style.animationDuration = `${4 + i * 1.3}s`;
+        puff.style.animationDelay = phaseDelay(5, i + seed);
+        g.appendChild(puff);
+      }
+    } else if (w.type === 'terremoto') {
+      const crack = svgEl('path', {
+        d: `M${px + 6} ${py + 8} L${px + 16} ${py + 17} L${px + 11} ${py + 23} L${px + 24} ${py + 33}`,
+      }, 'quake-crack');
+      crack.style.animationDelay = phaseDelay(1.2, seed);
+      g.appendChild(crack);
+    } else if ((x + y) % 2 === 0) {
+      const bolt = svgEl('path', { d: `M${px + 22} ${py + 4} L${px + 15} ${py + 21} L${px + 21} ${py + 21} L${px + 16} ${py + 36}` }, 'bolt');
+      bolt.style.animationDelay = phaseDelay(1.4, seed);
+      g.appendChild(bolt);
     }
-  }
-  // Marco de la zona.
-  const frame = svgEl('rect', { x: w.x * TILE_SIZE + 1, y: w.y * TILE_SIZE + 1, width: w.size * TILE_SIZE - 2, height: w.size * TILE_SIZE - 2, rx: 3 }, 'weather-frame');
-  frame.setAttribute('stroke', info.color);
-  g.appendChild(frame);
+  });
+
+  // Contorno: solo los bordes que dan hacia fuera de la zona.
+  w.cells.forEach(({ x, y }) => {
+    const px = x * T;
+    const py = y * T;
+    const edges = [
+      [0, -1, px, py, px + T, py],
+      [0, 1, px, py + T, px + T, py + T],
+      [-1, 0, px, py, px, py + T],
+      [1, 0, px + T, py, px + T, py + T],
+    ];
+    edges.forEach(([dx, dy, x1, y1, x2, y2]) => {
+      if (inZone.has(`${x + dx},${y + dy}`)) return;
+      const line = svgEl('line', { x1, y1, x2, y2 }, 'weather-frame');
+      line.setAttribute('stroke', info.color);
+      g.appendChild(line);
+    });
+  });
   boardSvg.appendChild(g);
 }
 
-function canAttackCreatureWith(unit, state) {
-  const c = state.activeCreature;
+// Ataque a una criatura concreta: la ficha propia debe estar adyacente.
+function canAttackCreatureWith(unit, state, c) {
   if (!c || !unit) return false;
   const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
   const dx = Math.abs(unit.x - c.x);
@@ -837,18 +917,20 @@ function canAttackCreatureWith(unit, state) {
     && dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
 }
 
-function attackCreatureWith(unitId) {
-  socket.emit('action:attackCreature', { unitId });
+function attackCreatureWith(unitId, creatureId) {
+  socket.emit('action:attackCreature', { unitId, creatureId });
 }
 
 function renderCreature(state) {
-  const c = state.activeCreature;
-  if (!c) return;
-  const info = CREATURE_INFO[c.type] || CREATURE_INFO.lobo;
+  creaturesOf(state).forEach((c) => renderOneCreature(state, c));
+}
+
+function renderOneCreature(state, c) {
+  const info = creatureInfo(c.type);
   const cx = c.x * TILE_SIZE + TILE_SIZE / 2;
   const cy = c.y * TILE_SIZE + TILE_SIZE / 2;
   const selUnit = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
-  const attackable = canAttackCreatureWith(selUnit, state);
+  const attackable = canAttackCreatureWith(selUnit, state, c);
 
   const g = svgEl('g', {}, 'creature-token' + (attackable ? ' attackable' : ''));
   g.style.setProperty('--creature-color', info.color);
@@ -870,8 +952,8 @@ function renderCreature(state) {
 
   const hit = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 1 }, 'unit-hit creature-hit');
   hit.addEventListener('click', () => {
-    if (attackable) attackCreatureWith(selUnit.id);
-    else inspectCreature();
+    if (attackable) attackCreatureWith(selUnit.id, c.id);
+    else inspectCreature(c.id);
   });
   g.appendChild(hit);
   boardSvg.appendChild(g);
@@ -922,12 +1004,12 @@ function handleUnitClick(unitId) {
 
 function inspectUnit(unitId) {
   inspectedUnitId = unitId;
-  inspectedCreature = false;
+  inspectedCreatureId = null;
   renderSelection();
 }
 
-function inspectCreature() {
-  inspectedCreature = true;
+function inspectCreature(creatureId) {
+  inspectedCreatureId = creatureId == null ? null : creatureId;
   inspectedUnitId = null;
   renderSelection();
 }
@@ -937,7 +1019,7 @@ function selectUnit(unitId) {
   if (!unit || unit.owner !== myId) return;
   cancelFarmPlacement();
   inspectedUnitId = null;
-  inspectedCreature = false;
+  inspectedCreatureId = null;
   selectedCastleId = null;
   if (selectedUnitId === unitId) {
     SFX.play('deselect');
@@ -962,7 +1044,7 @@ function selectCastle(castleId) {
   cancelFarmPlacement();
   selectedUnitId = null;
   inspectedUnitId = null;
-  inspectedCreature = false;
+  inspectedCreatureId = null;
   reachableTiles = [];
   SFX.play(selectedCastleId === castleId ? 'deselect' : 'select_castle');
   selectedCastleId = selectedCastleId === castleId ? null : castleId;
@@ -983,8 +1065,9 @@ function renderSelection() {
   if (castle && castle.owner !== myId) castle = null;
 
   if (!unit && !castle) {
-    if (inspectedCreature && currentState.activeCreature) {
-      const c = currentState.activeCreature;
+    const inspected = inspectedCreatureId != null ? creaturesOf(currentState).find((cc) => cc.id === inspectedCreatureId) : null;
+    if (inspected) {
+      const c = inspected;
       selectionBox.innerHTML = `
         <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
           <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(c.type)}</svg>
@@ -1049,15 +1132,16 @@ function renderSelection() {
     </div>
     <div class="sel-hpbar"><i style="width:${Math.round((unit.hp / unit.maxHp) * 100)}%; background:${hpColor(unit.hp / unit.maxHp)}"></i></div>
     <div style="color:var(--ink-dim); font-size:12px; margin-top:6px;">
-      ${unit.type === 'rey' ? 'El Rey permanece en su castillo' : (unit.movedThisTurn ? 'Ya se movió este turno' : 'Puede moverse')}
+      ${unit.type === 'rey' ? 'El Rey permanece en su castillo' : (isInQuake(currentState, unit) ? 'Inmovilizada por el terremoto' : (unit.movedThisTurn ? 'Ya se movió este turno' : 'Puede moverse'))}
       ${unit.type === 'fenix' ? `<br><span class="phoenix-note">${(currentState.players.find((p) => p.id === unit.owner) || {}).phoenixRevived ? 'Resurrección ya usada' : 'Resurrección disponible (10 de oro, castillo neutral)'}</span>` : ''}
       ${FLYING_TYPES.has(unit.type) ? '<br>Vuela sobre los abismos' : ''}
     </div>
-    ${canAttackCreatureWith(unit, currentState) ? `<button class="action-btn attack-btn" id="btnAttackCreature" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[currentState.activeCreature.type]}</span><span class="cost">-${unit.atk} vida</span></button>` : ''}
-    ${unit.attackedThisTurn && currentState.activeCreature && unit.type !== 'rey' ? '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>' : ''}
+    ${creaturesOf(currentState).filter((c) => canAttackCreatureWith(unit, currentState, c)).map((c) => `<button class="action-btn attack-btn" data-creature="${c.id}" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[c.type] || c.type}</span><span class="cost">-${unit.atk} vida</span></button>`).join('')}
+    ${unit.attackedThisTurn && creaturesOf(currentState).length > 0 && unit.type !== 'rey' ? '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>' : ''}
   `;
-  const atkBtn = document.getElementById('btnAttackCreature');
-  if (atkBtn) atkBtn.onclick = () => attackCreatureWith(unit.id);
+  selectionBox.querySelectorAll('[data-creature]').forEach((b) => {
+    b.onclick = () => attackCreatureWith(unit.id, Number(b.dataset.creature));
+  });
 
   if (castle && isMyTurn) {
     castleActions.style.display = 'block';
@@ -1112,6 +1196,49 @@ function renderProduceGrid(castle, myPlayer) {
   });
 }
 
+// Rendirse (cualquier jugador vivo) y Terminar partida (solo el líder).
+// Piden confirmación con un segundo clic para evitar accidentes.
+function updateExitButtons(state) {
+  const playing = !!state && state.phase === 'playing';
+  const me = state ? state.players.find((p) => p.id === myId) : null;
+  btnSurrender.style.display = playing && me && me.alive ? 'block' : 'none';
+  btnEndGame.style.display = playing && state.leaderId === myId ? 'block' : 'none';
+}
+
+function armConfirm(btn, idleText, confirmText, onConfirm) {
+  let timer = null;
+  const reset = () => {
+    clearTimeout(timer);
+    btn.dataset.armed = '0';
+    btn.textContent = idleText;
+    btn.classList.remove('armed');
+  };
+  btn.addEventListener('click', () => {
+    if (btn.dataset.armed === '1') {
+      reset();
+      onConfirm();
+      return;
+    }
+    SFX.play('ui_click');
+    btn.dataset.armed = '1';
+    btn.textContent = confirmText;
+    btn.classList.add('armed');
+    timer = setTimeout(reset, 3000);
+  });
+}
+
+armConfirm(btnSurrender, 'Rendirse', '¿Seguro? Toca otra vez', () => {
+  selectedUnitId = null;
+  selectedCastleId = null;
+  cancelFarmPlacement();
+  reachableTiles = [];
+  socket.emit('action:surrender');
+});
+
+armConfirm(btnEndGame, 'Terminar partida', '¿Terminar para todos? Toca otra vez', () => {
+  socket.emit('game:end');
+});
+
 btnEndTurn.addEventListener('click', () => {
   SFX.play('end_turn');
   selectedUnitId = null;
@@ -1133,7 +1260,7 @@ const CAPTURE_EVENTS = new Set([
   'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
   'creatureDefeated', 'creatureTamed', 'phoenixRevived',
 ]);
-const WORLD_EVENTS = new Set(['creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost']);
+const WORLD_EVENTS = new Set(['creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
 
 function logClassFor(event) {
   if (COMBAT_EVENTS.has(event)) return 'log-combat';
@@ -1176,8 +1303,10 @@ function describeLog(log) {
     case 'creatureDefeated': return `${label(log.creatureType)} derrotado: +${log.goldReward} de oro`;
     case 'creatureTamed': return `¡${label(log.creatureType)} domado! Se une como tropa en ${to}`;
 
-    case 'weatherSpawned': return `${(WEATHER_INFO[log.weather.type] || {}).label || 'Clima'} sobre la zona (${log.weather.x},${log.weather.y}) — 3x3`;
-    case 'weatherEnded': return `Se disipa: ${(WEATHER_INFO[log.weather.type] || {}).label || 'el clima'}`;
+    case 'weatherSpawned': return `${weatherInfo(log.weather.type).label} sobre ${Array.isArray(log.weather.cells) ? log.weather.cells.length : 9} casillas`;
+    case 'weatherEnded': return `Se disipa: ${weatherInfo(log.weather.type).label}`;
+    case 'surrender': return `${playerNameOf(log.playerId)} se rindió`;
+    case 'disconnect': return `${playerNameOf(log.playerId)} se desconectó y queda fuera de la partida`;
     case 'weatherKill': return `${label(log.unitType)} sucumbe al clima en ${to}`;
 
     case 'phoenixRevived': return `¡El Fénix renace en el castillo neutral #${log.castleId}! (-10 de oro)`;

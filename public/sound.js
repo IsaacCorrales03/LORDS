@@ -55,6 +55,9 @@ const SFX = (() => {
     weather_electrica: ['weather_electrica.mp3', 0.7],
     weather_nieve: ['weather_nieve.mp3', 0.7],
     weather_arena: ['weather_arena.mp3', 0.7],
+    weather_acido: ['weather_acido.mp3', 0.7],
+    weather_niebla: ['weather_niebla.mp3', 0.7],
+    weather_terremoto: ['weather_terremoto.mp3', 0.8],
     weather_end: ['weather_end.mp3', 0.5],
     weather_kill: ['weather_kill.mp3', 0.6],
     // Fénix
@@ -128,23 +131,40 @@ const SFX = (() => {
   window.addEventListener('keydown', unlock);
 
   // ---------- Botones mute ----------
+  // Van arriba a la derecha, dentro del hueco que .topbar reserva con
+  // padding-right (style.css), así no tapan el indicador "Turno de".
+  // El contenedor tiene id "sound-controls": se puede mover desde style.css.
+  const ICONS = {
+    music: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+    sfx: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>',
+  };
   function buildControls() {
+    if (document.getElementById('sound-controls')) return;
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'position:fixed;top:10px;right:10px;z-index:9999;display:flex;gap:6px;';
-    const mk = (label, get, set) => {
+    wrap.id = 'sound-controls';
+    wrap.style.cssText = 'position:fixed;top:11px;right:12px;z-index:60;display:flex;gap:6px;';
+    const mk = (title, icon, get, set) => {
       const b = document.createElement('button');
-      b.style.cssText = 'background:#141b26;color:#ece3c9;border:1px solid #3a4658;border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px;';
-      const paint = () => { b.textContent = label + (get() ? '' : ' ✕'); b.style.opacity = get() ? '1' : '0.55'; };
+      b.type = 'button';
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.style.cssText = 'background:#141b26;color:#ece3c9;border:1px solid #3a4658;border-radius:8px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      const paint = () => {
+        const off = !get();
+        b.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+          + ICONS[icon] + (off ? '<path d="M3 3l18 18"/>' : '') + '</svg>';
+        b.style.opacity = off ? '0.55' : '1';
+      };
       b.addEventListener('click', () => { set(!get()); paint(); });
       paint();
       wrap.appendChild(b);
     };
-    mk('🎵', () => musicOn, (v) => {
+    mk('Música', 'music', () => musicOn, (v) => {
       musicOn = v;
       try { localStorage.setItem('musicOn', v ? '1' : '0'); } catch (e) {}
       if (v) startMusic(); else stopMusic();
     });
-    mk('🔊', () => sfxOn, (v) => {
+    mk('Efectos de sonido', 'sfx', () => sfxOn, (v) => {
       sfxOn = v;
       try { localStorage.setItem('sfxOn', v ? '1' : '0'); } catch (e) {}
     });
@@ -212,6 +232,10 @@ const SFX = (() => {
       // Fénix
       case 'phoenixRevived': play('phoenix_revive'); return;
       case 'phoenixLost': play('phoenix_lost'); return;
+
+      // Rendición / desconexión
+      case 'surrender':
+      case 'disconnect': play('player_leave'); return;
 
       // Economía
       case 'healed': play('heal'); return;

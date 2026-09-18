@@ -4,7 +4,7 @@
 // solo a la vez; dura 2 turnos. La zona se guarda como lista de casillas
 // (`cells`) y se recalcula en vivo: solo cuenta quien esté dentro en ese
 // momento.
-//   - electrica, nieve, arena, fuego, niebla: las fichas dentro pierden
+//   - electrica, nieve, arena, acido, niebla: las fichas dentro pierden
 //     1 de vida por turno (hoy todas tienen el mismo efecto).
 //   - terremoto: no hace daño, pero las fichas dentro NO pueden moverse
 //     mientras dure (ver isUnitImmobilized).
@@ -17,7 +17,7 @@ const WEATHER_INTERVAL_TURNS = 3;
 const WEATHER_DURATION_TURNS = 2;
 const WEATHER_DAMAGE = 1;
 const WEATHER_CELLS = 9;
-const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'fuego', 'niebla', 'terremoto'];
+const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'acido', 'niebla', 'terremoto'];
 const NO_DAMAGE_TYPES = new Set(['terremoto']);
 
 const ORTHO = [[1, 0], [-1, 0], [0, 1], [0, -1]];

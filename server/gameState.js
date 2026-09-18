@@ -29,6 +29,13 @@ function maxCreaturesFor(playerCount) {
   return Math.ceil(playerCount / 2);
 }
 
+// Criaturas activas como arreglo. Compatibilidad: mientras creatures.js siga
+// usando el campo viejo (activeCreature, una sola), se expone como lista.
+function getActiveCreatures(state) {
+  if (state.activeCreatures && state.activeCreatures.length > 0) return state.activeCreatures;
+  return state.activeCreature ? [state.activeCreature] : [];
+}
+
 const BOARD_CONFIG = {
   small: { size: 13 },
   medium: { size: 17 },
@@ -376,6 +383,7 @@ module.exports = {
   BOARD_CONFIG,
   getBoardConfig,
   maxCreaturesFor,
+  getActiveCreatures,
   RANKS,
   CASTLE_LEVELS,
   PLAYER_COLORS,

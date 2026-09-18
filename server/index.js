@@ -43,6 +43,7 @@ function serializeState(s) {
       alive: p.alive,
       castleId: p.castleId,
       phoenixRevived: p.phoenixRevived,
+      surrendered: !!p.surrendered,
     })),
     turnOrder: s.turnOrder,
     currentTurnIndex: s.currentTurnIndex,
@@ -69,6 +70,25 @@ function flushEvents() {
   const events = state.eventQueue;
   state.eventQueue = [];
   events.forEach((evt) => io.emit('action:log', evt));
+}
+
+// Avisa a los clientes de lo que pasó al avanzar el turno (clima, criatura).
+function emitTurnResult(result) {
+  if (!result) return;
+  if (result.weather && result.weather.spawned) {
+    io.emit('action:log', { type: 'weatherSpawned', event: 'weatherSpawned', weather: result.weather.spawned });
+  }
+  if (result.weather && result.weather.expired) {
+    io.emit('action:log', { type: 'weatherEnded', event: 'weatherEnded', weather: result.weather.expired });
+  }
+  if (result.spawnedCreature) {
+    io.emit('action:log', {
+      type: 'creatureSpawned',
+      event: 'creatureSpawned',
+      creature: result.spawnedCreature,
+      to: { x: result.spawnedCreature.x, y: result.spawnedCreature.y },
+    });
+  }
 }
 
 function shuffle(arr) {
@@ -236,22 +256,40 @@ io.on('connection', (socket) => {
     try {
       const result = actions.endTurn(state, socket.id);
       broadcastState();
-      if (result && result.weather && result.weather.spawned) {
-        io.emit('action:log', { type: 'weatherSpawned', event: 'weatherSpawned', weather: result.weather.spawned });
-      }
-      if (result && result.weather && result.weather.expired) {
-        io.emit('action:log', { type: 'weatherEnded', event: 'weatherEnded', weather: result.weather.expired });
-      }
-      if (result && result.spawnedCreature) {
-        io.emit('action:log', {
-          type: 'creatureSpawned',
-          event: 'creatureSpawned',
-          creature: result.spawnedCreature,
-          to: { x: result.spawnedCreature.x, y: result.spawnedCreature.y },
-        });
-      }
+      emitTurnResult(result);
       flushEvents();
       if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
+  // Cualquier jugador vivo puede rendirse en cualquier momento.
+  socket.on('action:surrender', () => {
+    if (!state) return;
+    try {
+      const result = actions.surrenderPlayer(state, socket.id);
+      broadcastState();
+      io.emit('action:log', { type: 'surrender', event: 'surrender', playerId: socket.id });
+      emitTurnResult(result);
+      flushEvents();
+      if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
+  // Solo el líder puede terminar la partida (queda sin ganador).
+  socket.on('game:end', () => {
+    if (!state) return;
+    if (socket.id !== state.leaderId) {
+      socket.emit('error:message', 'Solo el líder puede terminar la partida.');
+      return;
+    }
+    try {
+      actions.forceEndGame(state);
+      broadcastState();
+      io.emit('game:over', { winner: null, endedByLeader: true });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -298,8 +336,37 @@ io.on('connection', (socket) => {
       }
       broadcastState();
     }
-    // Fase 2 (partida ya iniciada): no removemos jugadores para no romper
-    // el estado; solo lo dejamos registrado en consola.
+
+    if (!state) return;
+
+    if (state.phase === 'playing') {
+      // Partida en curso: quien se desconecta se rinde automáticamente, así
+      // el turno nunca queda trabado esperando a un jugador que ya no está.
+      const player = state.players.find((p) => p.id === socket.id);
+      if (player && player.alive) {
+        try {
+          const result = actions.surrenderPlayer(state, socket.id);
+          io.emit('action:log', { type: 'disconnect', event: 'disconnect', playerId: socket.id });
+          emitTurnResult(result);
+          flushEvents();
+          if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+        } catch (err) {
+          console.error('[desconexión] error al rendir jugador:', err.message);
+        }
+      }
+    }
+
+    // Si se fue el líder, el mando pasa a otro jugador vivo.
+    if (state.leaderId === socket.id) {
+      const nextLeader = state.players.find((p) => p.alive && p.id !== socket.id);
+      state.leaderId = nextLeader ? nextLeader.id : null;
+    }
+
+    // Sin nadie conectado, se libera la sala para poder crear otra partida.
+    if (io.of('/').sockets.size === 0) {
+      state = null;
+    }
+    broadcastState();
   });
 });
 

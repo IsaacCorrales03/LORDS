@@ -1,9 +1,13 @@
 // server/weather.js
 // Eventos climáticos: a partir de la ronda 3, cada 3 turnos aparece un evento
-// en una zona aleatoria de 3x3. Uno solo a la vez; dura 2 turnos. Mientras
-// está activo, las fichas dentro de la zona pierden 1 de vida por turno
-// (se recalcula en vivo: solo cuenta quien esté dentro en ese momento).
-// Las cinco variantes (eléctrica, nieve, arena, fuego, niebla) hoy tienen el mismo efecto.
+// en una zona aleatoria de 9 casillas (irregular, no un cuadrado fijo). Uno
+// solo a la vez; dura 2 turnos. La zona se guarda como lista de casillas
+// (`cells`) y se recalcula en vivo: solo cuenta quien esté dentro en ese
+// momento.
+//   - electrica, nieve, arena, fuego, niebla: las fichas dentro pierden
+//     1 de vida por turno (hoy todas tienen el mismo efecto).
+//   - terremoto: no hace daño, pero las fichas dentro NO pueden moverse
+//     mientras dure (ver isUnitImmobilized).
 
 const { isAccessibleTile } = require('./terrain');
 const { killUnit, queueEvent } = require('./units');
@@ -12,27 +16,56 @@ const WEATHER_START_ROUND = 3;
 const WEATHER_INTERVAL_TURNS = 3;
 const WEATHER_DURATION_TURNS = 2;
 const WEATHER_DAMAGE = 1;
-const WEATHER_SIZE = 3;
-const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'fuego', 'niebla'];
+const WEATHER_CELLS = 9;
+const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'fuego', 'niebla', 'terremoto'];
+const NO_DAMAGE_TYPES = new Set(['terremoto']);
+
+const ORTHO = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 function isInZone(w, x, y) {
-  return x >= w.x && x < w.x + w.size && y >= w.y && y < w.y + w.size;
+  return w.cells.some((c) => c.x === x && c.y === y);
 }
 
-// Elige una zona 3x3 dentro del tablero con al menos 5 casillas accesibles
-// (las inaccesibles quedan excluidas del clima).
+// Tropa dentro de un terremoto activo: no puede moverse (sí puede atacar).
+function isUnitImmobilized(state, unit) {
+  const w = state.activeWeather;
+  return !!(w && w.type === 'terremoto' && isInZone(w, unit.x, unit.y));
+}
+
+// Elige una zona de 9 casillas accesibles conectadas entre sí: parte de una
+// casilla al azar y crece hacia vecinas ortogonales, así cada evento tiene
+// una forma distinta.
 function pickZone(state) {
-  const max = state.boardSize - WEATHER_SIZE;
+  const size = state.boardSize;
+  const key = (x, y) => `${x},${y}`;
+
   for (let attempt = 0; attempt < 200; attempt++) {
-    const x = Math.floor(Math.random() * (max + 1));
-    const y = Math.floor(Math.random() * (max + 1));
-    let accessible = 0;
-    for (let dy = 0; dy < WEATHER_SIZE; dy++) {
-      for (let dx = 0; dx < WEATHER_SIZE; dx++) {
-        if (isAccessibleTile(state, x + dx, y + dy)) accessible++;
-      }
+    const sx = Math.floor(Math.random() * size);
+    const sy = Math.floor(Math.random() * size);
+    if (!isAccessibleTile(state, sx, sy)) continue;
+
+    const cells = [{ x: sx, y: sy }];
+    const taken = new Set([key(sx, sy)]);
+
+    while (cells.length < WEATHER_CELLS) {
+      const frontier = [];
+      cells.forEach((c) => {
+        ORTHO.forEach(([dx, dy]) => {
+          const nx = c.x + dx;
+          const ny = c.y + dy;
+          if (nx < 0 || ny < 0 || nx >= size || ny >= size) return;
+          if (taken.has(key(nx, ny))) return;
+          if (!isAccessibleTile(state, nx, ny)) return;
+          frontier.push({ x: nx, y: ny });
+        });
+      });
+      if (frontier.length === 0) break; // quedó encerrada: reintentar
+      const next = frontier[Math.floor(Math.random() * frontier.length)];
+      cells.push(next);
+      taken.add(key(next.x, next.y));
     }
-    if (accessible >= 5) return { x, y };
+
+    if (cells.length === WEATHER_CELLS) return cells;
   }
   return null;
 }
@@ -45,17 +78,19 @@ function tickWeather(state) {
 
   if (w) {
     // Daño: solo fichas físicamente dentro de la zona ahora mismo. El Rey no
-    // se puede mover, así que queda a salvo.
-    const victims = state.units.filter((u) => u.type !== 'rey' && isInZone(w, u.x, u.y));
-    victims.forEach((u) => {
-      u.hp -= WEATHER_DAMAGE;
-      result.damaged++;
-      if (u.hp <= 0) {
-        u.hp = 0;
-        queueEvent(state, { type: 'weatherKill', event: 'weatherKill', unitId: u.id, unitType: u.type, playerId: u.owner, weatherType: w.type, to: { x: u.x, y: u.y } });
-        killUnit(state, u);
-      }
-    });
+    // se puede mover, así que queda a salvo. El terremoto no hace daño.
+    if (!NO_DAMAGE_TYPES.has(w.type)) {
+      const victims = state.units.filter((u) => u.type !== 'rey' && isInZone(w, u.x, u.y));
+      victims.forEach((u) => {
+        u.hp -= WEATHER_DAMAGE;
+        result.damaged++;
+        if (u.hp <= 0) {
+          u.hp = 0;
+          queueEvent(state, { type: 'weatherKill', event: 'weatherKill', unitId: u.id, unitType: u.type, playerId: u.owner, weatherType: w.type, to: { x: u.x, y: u.y } });
+          killUnit(state, u);
+        }
+      });
+    }
     w.turnsLeft -= 1;
     if (w.turnsLeft <= 0) {
       state.activeWeather = null;
@@ -67,14 +102,12 @@ function tickWeather(state) {
   if (state.round < WEATHER_START_ROUND) return result;
   if (state.turnCounter <= 0 || state.turnCounter % WEATHER_INTERVAL_TURNS !== 0) return result;
 
-  const zone = pickZone(state);
-  if (!zone) return result;
+  const cells = pickZone(state);
+  if (!cells) return result;
   state.activeWeather = {
     id: state.weatherIdCounter++,
     type: WEATHER_TYPES[Math.floor(Math.random() * WEATHER_TYPES.length)],
-    x: zone.x,
-    y: zone.y,
-    size: WEATHER_SIZE,
+    cells,
     turnsLeft: WEATHER_DURATION_TURNS,
   };
   result.spawned = state.activeWeather;
@@ -83,5 +116,5 @@ function tickWeather(state) {
 
 module.exports = {
   WEATHER_START_ROUND, WEATHER_INTERVAL_TURNS, WEATHER_DURATION_TURNS,
-  WEATHER_DAMAGE, WEATHER_TYPES, tickWeather, isInZone,
+  WEATHER_DAMAGE, WEATHER_CELLS, WEATHER_TYPES, tickWeather, isInZone, isUnitImmobilized,
 };

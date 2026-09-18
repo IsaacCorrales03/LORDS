@@ -19,7 +19,7 @@ const {
 const {
   tickCreatureSpawn, tickCreatureRegen, attackCreature: attackCreatureInternal,
 } = require('./creatures');
-const { tickWeather } = require('./weather');
+const { tickWeather, isUnitImmobilized } = require('./weather');
 
 function tileAt(state, x, y) {
   if (y < 0 || y >= state.boardSize || x < 0 || x >= state.boardSize) return null;
@@ -146,6 +146,7 @@ function getGriffinMoves(state, unit) {
 function getReachableTiles(state, unit) {
   if (unit.type === 'rey') return []; // el Rey nunca puede moverse
   if (isPetrified(unit)) return []; // petrificado: no puede moverse
+  if (isUnitImmobilized(state, unit)) return []; // terremoto: no puede moverse
 
   switch (unit.type) {
     case 'peon':
@@ -264,6 +265,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
   if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede moverse');
+  if (isUnitImmobilized(state, unit)) throw new Error('Un terremoto inmoviliza a esa ficha');
   if (unit.movedThisTurn) throw new Error('Esa ficha ya se movió este turno');
 
   const reachable = getReachableTiles(state, unit);
@@ -378,6 +380,7 @@ function moveUnit(state, playerId, unitId, toX, toY) {
   // Tras cualquier combate/conquista, revisar si algún jugador perdió su rey.
   state.players.forEach((p) => checkPlayerDefeat(state, p));
   checkVictory(state);
+  syncTurnOrder(state);
 
   return log;
 }
@@ -432,6 +435,7 @@ function attackUnit(state, playerId, unitId, targetId) {
 
   state.players.forEach((p) => checkPlayerDefeat(state, p));
   checkVictory(state);
+  syncTurnOrder(state);
 
   return log;
 }
@@ -545,6 +549,67 @@ function healTroopsInCastles(state) {
   if (healed > 0) queueEvent(state, { type: 'healed', event: 'healed', count: healed });
 }
 
+// --- Orden de turnos ---
+// Saca de turnOrder a los jugadores eliminados SIN descuadrar currentTurnIndex.
+// (Antes se filtraba la lista sin ajustar el índice, y eso hacía que a veces
+// se saltara o se perdiera un turno.) Devuelve:
+//   currentRemoved: el jugador que tenía el turno ya no está vivo; el índice
+//                   apunta ahora al siguiente jugador vivo.
+//   wrapped:        para llegar a ese siguiente jugador se pasó por el final
+//                   del orden (o sea, cierra una ronda).
+function syncTurnOrder(state) {
+  const old = state.turnOrder;
+  const cur = state.currentTurnIndex;
+  const isAlive = (id) => {
+    const p = findPlayer(state, id);
+    return !!(p && p.alive);
+  };
+  const fresh = old.filter(isAlive);
+  const currentRemoved = old.length > 0 && !isAlive(old[cur]);
+
+  let newIndex = 0;
+  let wrapped = false;
+  for (let i = 0; i < old.length; i++) {
+    const id = old[(cur + i) % old.length];
+    if (isAlive(id)) {
+      newIndex = fresh.indexOf(id);
+      wrapped = cur + i >= old.length;
+      break;
+    }
+  }
+  state.turnOrder = fresh;
+  state.currentTurnIndex = newIndex;
+  return { currentRemoved, wrapped };
+}
+
+// Efectos de inicio de turno del jugador que acaba de recibir el turno.
+function beginTurn(state, wrapped) {
+  state.turnCounter += 1;
+
+  // Cierre de ronda: cobrar oro -> curar tropas -> regeneración de criatura.
+  if (wrapped) {
+    state.round += 1;
+    collectGold(state);
+    healTroopsInCastles(state);
+    tickCreatureRegen(state);
+  }
+
+  // Veneno inflige daño (puede matar) y petrificación cuenta regresiva hasta
+  // liberar a la ficha.
+  const newCurrentPlayerId = state.turnOrder[state.currentTurnIndex];
+  const statusEvents = tickUnitStatuses(state, newCurrentPlayerId);
+  statusEvents.forEach((evt) => queueEvent(state, evt));
+  state.players.forEach((p) => checkPlayerDefeat(state, p));
+  syncTurnOrder(state);
+
+  const weather = tickWeather(state);
+  const spawnedCreature = tickCreatureSpawn(state);
+
+  checkVictory(state);
+
+  return { spawnedCreature, weather, statusEvents };
+}
+
 // --- Fin de turno ---
 function endTurn(state, playerId) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
@@ -556,36 +621,64 @@ function endTurn(state, playerId) {
     }
   });
 
-  state.turnOrder = state.turnOrder.filter((id) => {
-    const p = findPlayer(state, id);
-    return p && p.alive;
-  });
+  // Limpiar eliminados antes de avanzar (el índice se re-calcula solo).
+  syncTurnOrder(state);
   if (state.turnOrder.length === 0) return {};
 
   state.currentTurnIndex = (state.currentTurnIndex + 1) % state.turnOrder.length;
-  state.turnCounter += 1;
+  const wrapped = state.currentTurnIndex === 0;
+  return beginTurn(state, wrapped);
+}
 
-  // Cierre de ronda: cobrar oro -> curar tropas -> regeneración de criatura.
-  if (state.currentTurnIndex === 0) {
-    state.round += 1;
-    collectGold(state);
-    healTroopsInCastles(state);
-    tickCreatureRegen(state);
-  }
+// --- Rendirse / desconexión / fin forzado ---
+// Elimina a un jugador: sus fichas y granjas desaparecen, sus castillos
+// vuelven a ser neutrales y su territorio queda libre.
+function eliminatePlayer(state, player) {
+  player.alive = false;
+  player.surrendered = true;
 
-  // Al empezar el turno del siguiente jugador: veneno inflige daño (puede
-  // matar) y petrificación cuenta regresiva hasta liberar a la ficha.
-  const newCurrentPlayerId = state.turnOrder[state.currentTurnIndex];
-  const statusEvents = tickUnitStatuses(state, newCurrentPlayerId);
-  statusEvents.forEach((evt) => queueEvent(state, evt));
-  state.players.forEach((p) => checkPlayerDefeat(state, p));
+  state.units = state.units.filter((u) => u.owner !== player.id);
+  state.farms = state.farms.filter((f) => f.owner !== player.id);
+  state.castles.forEach((c) => {
+    if (c.owner === player.id) {
+      c.owner = null;
+      c.hasKing = false;
+      c.garrison = [];
+      c.farms = 0;
+    }
+  });
+  state.tiles.forEach((row) => {
+    row.forEach((t) => {
+      if (t.owner === player.id) {
+        if (t.type !== 'castle') t.type = 'neutral';
+        delete t.owner;
+      }
+    });
+  });
+}
 
-  const weather = tickWeather(state);
-  const spawnedCreature = tickCreatureSpawn(state);
+// El jugador se rinde (o se desconectó). Puede hacerse aunque no sea su
+// turno; si lo era, el turno pasa automáticamente al siguiente jugador.
+// Devuelve el mismo formato que endTurn ({ spawnedCreature, weather, ... }).
+function surrenderPlayer(state, playerId) {
+  if (state.phase !== 'playing') throw new Error('La partida no está en curso');
+  const player = findPlayer(state, playerId);
+  if (!player || !player.alive) throw new Error('No estás en la partida');
+
+  eliminatePlayer(state, player);
+  const { currentRemoved, wrapped } = syncTurnOrder(state);
 
   checkVictory(state);
+  if (state.phase !== 'playing') return {};
+  if (currentRemoved) return beginTurn(state, wrapped);
+  return {};
+}
 
-  return { spawnedCreature, weather, statusEvents };
+// El líder termina la partida: sin ganador.
+function forceEndGame(state) {
+  if (state.phase !== 'playing') throw new Error('La partida no está en curso');
+  state.phase = 'finished';
+  state.winner = null;
 }
 
 module.exports = {
@@ -600,6 +693,9 @@ module.exports = {
   attackCreature,
   attackUnit,
   endTurn,
+  surrenderPlayer,
+  forceEndGame,
+  syncTurnOrder,
   healTroopsInCastles,
   checkVictory,
 };

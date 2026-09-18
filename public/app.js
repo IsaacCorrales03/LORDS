@@ -1,0 +1,1211 @@
+// public/app.js
+// Cliente: conexión socket, lobby (líder + sala de espera) y juego (render SVG + interacción).
+
+const socket = io();
+
+// --- Constantes espejo del servidor (solo para mostrar costos/íconos en UI) ---
+const UNIT_LABELS = {
+  rey: 'Rey', peon: 'Peón', caballo: 'Caballo', alfil: 'Alfil', torre: 'Torre', reina: 'Reina',
+  dragon: 'Dragón', fenix: 'Fénix', lobo: 'Lobo', golem: 'Golem', hidra: 'Hidra',
+};
+// Criaturas neutrales: color de aura, recompensa y nota corta para el panel.
+const CREATURE_INFO = {
+  lobo:   { color: '#8fa3b8', reward: '10 de oro', note: 'Rápido y mordedor.' },
+  golem:  { color: '#b58a5a', reward: '14 de oro', note: 'Lento pero duro.' },
+  dragon: { color: '#e2685a', reward: 'Se doma como tropa', note: 'Vuela sobre los abismos.' },
+  hidra:  { color: '#6fcf97', reward: '60 de oro', note: 'Regenera +2 de vida por ronda.' },
+  fenix:  { color: '#ffb347', reward: 'Se doma como tropa', note: 'Resucita una vez por jugador (10 de oro, castillo neutral).' },
+};
+const WEATHER_INFO = {
+  electrica: { label: 'Tormenta eléctrica', color: '#f5d84a' },
+  nieve:     { label: 'Ventisca de nieve', color: '#bfe3ff' },
+  arena:     { label: 'Tormenta de arena', color: '#d9a85c' },
+};
+const UNIT_COSTS = { peon: 10, caballo: 30, alfil: 60, torre: 100, reina: 150 };
+const CASTLE_UPGRADE_COST = { 2: 15, 3: 50 };
+const FARM_COST = 20;
+const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'pink'];
+const PLAYER_COLOR_HEX = {
+  red: '#c1483a', blue: '#3f74b8', green: '#4c9160',
+  yellow: '#c9a23d', purple: '#8462b8', orange: '#d1823f',
+  cyan: '#3aa6a6', pink: '#c8659a',
+};
+
+// Emblemas heráldicos: cada ficha es un pictograma plano en vez de un glifo de
+// ajedrez, dibujado con formas simples para que se lea bien a tamaño chico.
+const UNIT_ICON_PATHS = {
+  rey: '<path d="M4 17.5 L4 10.5 L8 13.5 L12 7 L16 13.5 L20 10.5 L20 17.5 Z" fill="currentColor"/><rect x="4" y="17.5" width="16" height="2.3" fill="currentColor"/><circle cx="12" cy="7" r="1.5" fill="currentColor"/>',
+  reina: '<path d="M3 17.5 L3 11.5 L6.3 13.8 L9 8.3 L12 12.2 L15 8.3 L17.7 13.8 L21 11.5 L21 17.5 Z" fill="currentColor"/><rect x="3" y="17.5" width="18" height="2.1" fill="currentColor"/><circle cx="12" cy="8.3" r="1.25" fill="currentColor"/><circle cx="6.3" cy="13.8" r="0.9" fill="currentColor"/><circle cx="17.7" cy="13.8" r="0.9" fill="currentColor"/>',
+  torre: '<path d="M6.5 20 L6.5 9.6 L8.3 9.6 L8.3 11 L10.6 11 L10.6 9.6 L13.4 9.6 L13.4 11 L15.7 11 L15.7 9.6 L17.5 9.6 L17.5 20 Z" fill="currentColor"/><rect x="6.5" y="7.4" width="11" height="2.2" fill="currentColor"/>',
+  alfil: '<path d="M12 3.2 C9.1 6.3 7.9 9.8 7.9 12.9 C7.9 16.1 9.6 18.1 12 19.2 C14.4 18.1 16.1 16.1 16.1 12.9 C16.1 9.8 14.9 6.3 12 3.2 Z" fill="currentColor"/><rect x="11.1" y="6.6" width="1.8" height="5.2" fill="var(--panel)"/><rect x="9.1" y="8.6" width="5.8" height="1.4" fill="var(--panel)"/><circle cx="12" cy="20.6" r="1.35" fill="currentColor"/>',
+  caballo: '<path d="M7.2 20 L7.2 12.2 A4.8 4.8 0 0 1 16.8 12.2 L16.8 20" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="8.4" cy="14.6" r="0.85" fill="currentColor"/><circle cx="10.3" cy="12" r="0.85" fill="currentColor"/><circle cx="13.7" cy="12" r="0.85" fill="currentColor"/><circle cx="15.6" cy="14.6" r="0.85" fill="currentColor"/>',
+  peon: '<circle cx="12" cy="7.4" r="3" fill="currentColor"/><path d="M8.6 20 L9.6 12.4 H14.4 L15.4 20 Z" fill="currentColor"/><rect x="7.4" y="19" width="9.2" height="2.1" fill="currentColor"/>',
+};
+
+// Criaturas y tropas especiales (mismo lienzo 24x24). Los "ojos" usan el color
+// del fondo del token para recortar la silueta.
+Object.assign(UNIT_ICON_PATHS, {
+  lobo: '<path d="M3.5 3.5 L9 8 H15 L20.5 3.5 L20 12.5 C20 16.6 16.4 19.8 12 21.4 C7.6 19.8 4 16.6 4 12.5 Z" fill="currentColor"/><path d="M7.4 12 L10.6 13 L8.4 14.5 Z" fill="#0c1119"/><path d="M16.6 12 L13.4 13 L15.6 14.5 Z" fill="#0c1119"/><path d="M10.4 17.3 H13.6 L12 19 Z" fill="#0c1119"/>',
+  golem: '<rect x="8" y="3.5" width="8" height="6.5" rx="1.2" fill="currentColor"/><rect x="5" y="10.8" width="14" height="8" rx="1.2" fill="currentColor"/><rect x="2" y="11.4" width="3" height="7" rx="1" fill="currentColor"/><rect x="19" y="11.4" width="3" height="7" rx="1" fill="currentColor"/><rect x="9.4" y="6" width="1.7" height="1.7" fill="#0c1119"/><rect x="12.9" y="6" width="1.7" height="1.7" fill="#0c1119"/><rect x="6.5" y="19" width="4" height="2.2" fill="currentColor"/><rect x="13.5" y="19" width="4" height="2.2" fill="currentColor"/>',
+  dragon: '<path d="M12 21 L8.2 15.6 L1.8 16.6 L5 10.4 L2.4 4.6 L9 7.6 L12 5 L15 7.6 L21.6 4.6 L19 10.4 L22.2 16.6 L15.8 15.6 Z" fill="currentColor"/><path d="M9.6 10.2 L11.2 11.2 L9.6 11.9 Z" fill="#0c1119"/><path d="M14.4 10.2 L12.8 11.2 L14.4 11.9 Z" fill="#0c1119"/>',
+  hidra: '<path d="M12 20 V12.5 M12 20 C8 19 5.5 15 6 8.5 M12 20 C16 19 18.5 15 18 8.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="10.2" r="2.5" fill="currentColor"/><circle cx="6" cy="7" r="2.5" fill="currentColor"/><circle cx="18" cy="7" r="2.5" fill="currentColor"/><ellipse cx="12" cy="20.4" rx="5.2" ry="2" fill="currentColor"/><circle cx="11.2" cy="9.9" r="0.6" fill="#0c1119"/><circle cx="12.8" cy="9.9" r="0.6" fill="#0c1119"/>',
+  fenix: '<path d="M12 14.4 C8 14.4 3.6 11.2 1.8 4.6 C6.8 6.4 10 7 12 10 C14 7 17.2 6.4 22.2 4.6 C20.4 11.2 16 14.4 12 14.4 Z" fill="currentColor"/><path d="M12 22.2 C9.2 19.4 9.2 17 12 14.6 C14.8 17 14.8 19.4 12 22.2 Z" fill="currentColor"/><circle cx="12" cy="8.2" r="2.2" fill="currentColor"/><path d="M12 3.2 L13 6 H11 Z" fill="currentColor"/>',
+});
+
+function unitIconMarkup(type) {
+  return UNIT_ICON_PATHS[type] || UNIT_ICON_PATHS.peon;
+}
+
+// --- Estado local del cliente ---
+let myId = null;
+let currentState = null;
+let selectedUnitId = null;
+let selectedCastleId = null;
+let inspectedUnitId = null; // ficha rival/propia ajena vista en el panel, sin seleccionarla
+let inspectedCreature = false; // true si se está inspeccionando la criatura activa
+const CASTLE_LEVEL_INFO = {
+  1: { goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2 },
+  2: { goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3 },
+  3: { goldPerTurn: 5, militaryCapacity: 4, maxFarms: 4 },
+};
+let reachableTiles = [];
+let nameEditTimer = null;
+const TILE_SIZE = 40;
+
+// Snapshots del render anterior, usados solo para animar lo que cambió.
+let prevTileSig = null;      // Map "x,y" -> "type:owner"
+let prevUnitPos = new Map(); // unitId -> "x,y"
+let prevGold = new Map();    // playerId -> gold
+let prevTurnPlayerId = null;
+let prevRound = null;
+let pendingFx = [];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const FLYING_TYPES = new Set(['dragon', 'fenix']);
+
+// Fase continua de una animación CSS: evita que reinicie en cada re-render.
+function phaseDelay(period, salt = 0) {
+  return `${-(((performance.now() / 1000) + salt) % period).toFixed(2)}s`;
+}
+function svgEl(tag, attrs = {}, cls = '') {
+  const el = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+  if (cls) el.setAttribute('class', cls);
+  return el;
+}
+function hpColor(ratio) {
+  return ratio > 0.6 ? '#6fcf97' : ratio > 0.3 ? '#e5b93f' : '#e2685a';
+}
+function hpBar(cx, y, w, hp, maxHp) {
+  const g = svgEl('g', {}, 'hp-bar');
+  g.appendChild(svgEl('rect', { x: cx - w / 2, y, width: w, height: 3.2, rx: 1.6 }, 'hp-bar-bg'));
+  const ratio = Math.max(0, Math.min(1, hp / maxHp));
+  const fill = svgEl('rect', { x: cx - w / 2, y, width: Math.max(0.1, w * ratio), height: 3.2, rx: 1.6 }, 'hp-bar-fill');
+  fill.setAttribute('fill', hpColor(ratio));
+  g.appendChild(fill);
+  return g;
+}          // eventos de log a animar en el próximo render del tablero
+
+// Colocación de granjas: al pedirla se resaltan las casillas de territorio
+// propio disponibles y se espera el clic en una de ellas.
+let placingFarm = false;
+let buildableFarmTiles = [];
+let pendingFarmCastleId = null;
+
+function cancelFarmPlacement() {
+  placingFarm = false;
+  buildableFarmTiles = [];
+  pendingFarmCastleId = null;
+}
+
+// --- Elementos: lobby ---
+const lobbyScreen = document.getElementById('lobby-screen');
+const createCard = document.getElementById('createCard');
+const createStatus = document.getElementById('createStatus');
+const roomCard = document.getElementById('roomCard');
+const roomSubtitle = document.getElementById('roomSubtitle');
+const myNameInput = document.getElementById('myNameInput');
+const colorPicker = document.getElementById('colorPicker');
+const roomPlayers = document.getElementById('roomPlayers');
+const btnReady = document.getElementById('btnReady');
+const btnStartGame = document.getElementById('btnStartGame');
+const roomStatus = document.getElementById('roomStatus');
+
+// --- Elementos: juego ---
+const gameScreen = document.getElementById('game-screen');
+const boardSvg = document.getElementById('board-svg');
+const playersList = document.getElementById('playersList');
+const turnIndicator = document.getElementById('turnIndicator');
+const roundLabel = document.getElementById('roundLabel');
+const selectionBox = document.getElementById('selectionBox');
+const castleActions = document.getElementById('castleActions');
+const produceGrid = document.getElementById('produceGrid');
+const btnBuildFarm = document.getElementById('btnBuildFarm');
+const btnUpgrade = document.getElementById('btnUpgrade');
+const btnEndTurn = document.getElementById('btnEndTurn');
+const toast = document.getElementById('toast');
+const gameoverOverlay = document.getElementById('gameover-overlay');
+const turnBanner = document.getElementById('turnBanner');
+const turnBannerDot = document.getElementById('turnBannerDot');
+const turnBannerText = document.getElementById('turnBannerText');
+const harvestBanner = document.getElementById('harvestBanner');
+const eventBanner = document.getElementById('eventBanner');
+const eventBannerDot = document.getElementById('eventBannerDot');
+const eventBannerText = document.getElementById('eventBannerText');
+
+// ================= CONEXIÓN =================
+
+socket.on('connect', () => {
+  myId = socket.id;
+  createStatus.textContent = 'Si sos la primera persona acá, definí el tamaño y creá la partida.';
+});
+
+socket.on('error:message', (msg) => {
+  SFX.play('ui_error');
+  showToast(msg);
+  createStatus.innerHTML = `<span class="warn">${escapeHtml(msg)}</span>`;
+  roomStatus.innerHTML = `<span class="warn">${escapeHtml(msg)}</span>`;
+  if (currentState && currentState.phase === 'playing') {
+    cancelFarmPlacement();
+    renderBoard(currentState);
+    renderSelection();
+  }
+});
+
+document.getElementById('btnSetCount').addEventListener('click', () => {
+  SFX.play('ui_click');
+  const count = document.getElementById('playerCount').value;
+  socket.emit('lobby:setPlayerCount', count);
+});
+
+// ================= ESTADO GENERAL =================
+
+socket.on('state:update', (state) => {
+  currentState = state;
+
+  if (!state) {
+    lobbyScreen.style.display = 'flex';
+    gameScreen.classList.remove('active');
+    createCard.style.display = 'block';
+    roomCard.style.display = 'none';
+    return;
+  }
+
+  if (state.phase === 'lobby') {
+    lobbyScreen.style.display = 'flex';
+    gameScreen.classList.remove('active');
+    createCard.style.display = 'none';
+    roomCard.style.display = 'block';
+    SFX.lobbyUpdate(state, myId);
+    renderRoom(state);
+    return;
+  }
+
+  // phase 'playing' o 'finished'
+  lobbyScreen.style.display = 'none';
+  gameScreen.classList.add('active');
+
+  if (state.phase === 'playing' && prevRound !== null && state.round > prevRound) {
+    showHarvestBanner();
+    roundLabel.classList.remove('bump');
+    void roundLabel.offsetWidth;
+    roundLabel.classList.add('bump');
+  }
+  prevRound = state.round;
+
+  renderPlayers(state);
+  renderWorldInfo(state);
+  renderTurnInfo(state);
+  maybeShowTurnBanner(state);
+  renderBoard(state);
+  renderSelection();
+});
+
+socket.on('game:started', () => {
+  SFX.play('game_start');
+  showToast('¡La partida ha comenzado!');
+});
+
+socket.on('action:log', (log) => {
+  queueEventBanner(log);
+  SFX.onLog(log);
+  pendingFx.push(log);
+  if (currentState) renderBoard(currentState);
+});
+
+socket.on('action:reachable', ({ unitId, tiles }) => {
+  if (unitId !== selectedUnitId) return;
+  reachableTiles = tiles;
+  renderBoard(currentState);
+});
+
+socket.on('action:buildableFarmTiles', ({ tiles }) => {
+  if (!pendingFarmCastleId) return;
+  buildableFarmTiles = tiles;
+  placingFarm = true;
+  showToast('Elegí una casilla de tu territorio para la granja');
+  renderBoard(currentState);
+  renderSelection();
+});
+
+socket.on('game:over', ({ winner }) => {
+  const title = document.getElementById('gameoverTitle');
+  const subtitle = document.getElementById('gameoverSubtitle');
+  if (winner === myId) {
+    title.textContent = 'Victoria';
+    subtitle.textContent = 'Tu reino se impuso sobre los demás.';
+  } else if (winner) {
+    const p = currentState.players.find((pl) => pl.id === winner);
+    title.textContent = 'Derrota';
+    subtitle.textContent = `${p ? p.name : 'Otro jugador'} conquistó el resto del tablero.`;
+  } else {
+    title.textContent = 'Partida terminada';
+    subtitle.textContent = 'No quedaron reinos en pie.';
+  }
+  SFX.stopMusic();
+  SFX.play(winner === myId ? 'victory' : 'defeat');
+  gameoverOverlay.classList.add('active');
+});
+
+// ================= SALA DE ESPERA =================
+
+function renderRoom(state) {
+  const me = state.players.find((p) => p.id === myId);
+  const isLeader = state.leaderId === myId;
+
+  roomSubtitle.textContent = `${state.players.length} / ${state.maxPlayers} jugadores en la sala`;
+
+  // Nombre propio: no pisar mientras el usuario está tipeando.
+  if (me && document.activeElement !== myNameInput) {
+    myNameInput.value = me.name;
+  }
+
+  // Selector de color.
+  colorPicker.innerHTML = '';
+  const takenColors = new Set(state.players.filter((p) => p.id !== myId).map((p) => p.color));
+  PLAYER_COLORS.forEach((color) => {
+    const btn = document.createElement('button');
+    btn.className = 'color-swatch' + (me && me.color === color ? ' selected' : '');
+    btn.style.background = PLAYER_COLOR_HEX[color];
+    btn.disabled = takenColors.has(color) && !(me && me.color === color);
+    btn.title = color;
+    btn.addEventListener('click', () => { SFX.play('ui_click'); socket.emit('lobby:setColor', color); });
+    colorPicker.appendChild(btn);
+  });
+
+  // Lista de jugadores + cupos vacíos.
+  roomPlayers.innerHTML = '';
+  state.players.forEach((p) => {
+    const row = document.createElement('div');
+    row.className = 'room-player-row';
+    row.innerHTML = `
+      <span class="swatch" style="background:${p.color ? PLAYER_COLOR_HEX[p.color] : '#333'}"></span>
+      <span class="name">${escapeHtml(p.name)}${p.id === myId ? ' (vos)' : ''}</span>
+      ${p.id === state.leaderId ? '<span class="leader-tag">Líder</span>' : ''}
+      <span class="ready-tag ${p.ready ? 'is-ready' : ''}">${p.ready ? 'Listo ✓' : 'Esperando…'}</span>
+    `;
+    roomPlayers.appendChild(row);
+  });
+  for (let i = state.players.length; i < state.maxPlayers; i++) {
+    const row = document.createElement('div');
+    row.className = 'room-player-row';
+    row.innerHTML = '<span class="swatch" style="background:#222"></span><span class="name empty-slot">Cupo libre…</span>';
+    roomPlayers.appendChild(row);
+  }
+
+  // Botón "Listo".
+  btnReady.textContent = me && me.ready ? 'Cancelar listo' : 'Estoy listo';
+  btnReady.disabled = !me || !me.color;
+  btnReady.onclick = () => { SFX.play(me && me.ready ? 'ready_off' : 'ready_on'); socket.emit('lobby:setReady', !(me && me.ready)); };
+
+  // Botón de inicio, solo para el líder.
+  if (isLeader) {
+    const roomFull = state.players.length === state.maxPlayers;
+    const allReady = state.players.every((p) => p.ready);
+    btnStartGame.style.display = 'block';
+    btnStartGame.disabled = !roomFull || !allReady;
+    btnStartGame.textContent = !roomFull
+      ? `Faltan jugadores (${state.players.length}/${state.maxPlayers})`
+      : (!allReady ? 'Esperando a que todos estén listos' : 'Iniciar partida');
+    btnStartGame.onclick = () => { SFX.play('ui_click'); socket.emit('lobby:startGame'); };
+  } else {
+    btnStartGame.style.display = 'none';
+  }
+}
+
+myNameInput.addEventListener('input', () => {
+  clearTimeout(nameEditTimer);
+  nameEditTimer = setTimeout(() => {
+    socket.emit('lobby:setName', myNameInput.value);
+  }, 350);
+});
+
+myNameInput.addEventListener('blur', () => {
+  socket.emit('lobby:setName', myNameInput.value);
+});
+
+// ================= RENDER: JUGADORES / TURNO (partida en curso) =================
+
+function renderPlayers(state) {
+  playersList.innerHTML = '';
+  state.players.forEach((p) => {
+    const castle = state.castles.find((c) => c.id === p.castleId);
+    const isCurrent = state.turnOrder[state.currentTurnIndex] === p.id;
+    const card = document.createElement('div');
+    card.className = 'player-card' + (isCurrent ? ' current-turn' : '') + (!p.alive ? ' dead' : '');
+    card.style.setProperty('--card-color', PLAYER_COLOR_HEX[p.color] || '#666');
+    card.innerHTML = `
+      <div class="name-row">
+        <span class="swatch" style="background:${PLAYER_COLOR_HEX[p.color] || '#666'}"></span>
+        <span>${escapeHtml(p.name)}${p.id === myId ? ' (vos)' : ''}</span>
+      </div>
+      <div class="stats">
+        <span title="Oro"><svg class="stat-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg> <b class="gold-value" data-player="${p.id}">${castleOrZero(p)}</b></span>
+        <span title="Nivel de castillo"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 20 V10 L8 13 L12 7 L16 13 L20 10 V20 Z" fill="currentColor"/></svg> <b>${castle ? castle.level : '—'}</b></span>
+        <span title="Granjas"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 20 V11 L12 5 L20 11 V20 Z" fill="currentColor"/><rect x="9.3" y="13.6" width="5.4" height="6.4" fill="var(--panel-2)"/></svg> <b>${castle ? castle.farms : 0}</b></span>
+      </div>
+    `;
+    playersList.appendChild(card);
+
+    const goldEl = card.querySelector('.gold-value');
+    animateGoldTo(goldEl, p.id, p.gold);
+  });
+}
+
+// Panel "Mundo": criatura activa, clima activo y cuenta atrás de próximos eventos.
+function renderWorldInfo(state) {
+  const el = document.getElementById('worldInfo');
+  if (!el) return;
+  const c = state.activeCreature;
+  const w = state.activeWeather;
+  const nextIn = (state.turnCounter % 3 === 0) ? 3 : 3 - (state.turnCounter % 3);
+
+  let html = '';
+  if (c) {
+    const info = CREATURE_INFO[c.type];
+    html += `<div class="world-card" style="--wc:${info.color}">
+      <div class="wc-head"><svg viewBox="0 0 24 24" fill="${info.color}" color="${info.color}">${unitIconMarkup(c.type)}</svg><b>${UNIT_LABELS[c.type]}</b><span class="wc-stats">${c.atk} ATQ · ${c.hp}/${c.maxHp}</span></div>
+      <div class="sel-hpbar"><i style="width:${Math.round((c.hp / c.maxHp) * 100)}%; background:${hpColor(c.hp / c.maxHp)}"></i></div>
+      <div class="wc-note">Botín: ${info.reward}. ${info.note}</div>
+    </div>`;
+  } else {
+    html += `<div class="world-card muted"><div class="wc-note">${state.round < 5 ? 'Las criaturas aparecen desde la ronda 5.' : `Próxima criatura en ${nextIn} turno(s).`}</div></div>`;
+  }
+  if (w) {
+    const info = WEATHER_INFO[w.type];
+    html += `<div class="world-card" style="--wc:${info.color}">
+      <div class="wc-head"><b>${info.label}</b><span class="wc-stats">${w.turnsLeft} turno(s)</span></div>
+      <div class="wc-note">Zona 3x3 en (${w.x},${w.y}): -1 de vida por turno a quien esté dentro.</div>
+    </div>`;
+  } else {
+    html += `<div class="world-card muted"><div class="wc-note">${state.round < 3 ? 'El clima cambia desde la ronda 3.' : `Próximo clima en ${nextIn} turno(s).`}</div></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function castleOrZero(p) {
+  return prevGold.has(p.id) ? prevGold.get(p.id) : p.gold;
+}
+
+// Anima el número de oro contando hacia el nuevo valor y lo resalta en
+// verde (sube) o rojo (baja) un instante.
+function animateGoldTo(el, playerId, newValue) {
+  const from = prevGold.has(playerId) ? prevGold.get(playerId) : newValue;
+  prevGold.set(playerId, newValue);
+
+  if (from === newValue) {
+    el.textContent = newValue;
+    return;
+  }
+  const diffClass = newValue > from ? 'gold-up' : 'gold-down';
+  el.classList.add(diffClass);
+  const duration = 500;
+  const start = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const value = Math.round(from + (newValue - from) * eased);
+    el.textContent = value;
+    if (t < 1) {
+      requestAnimationFrame(step);
+    } else {
+      el.textContent = newValue;
+      setTimeout(() => el.classList.remove(diffClass), 400);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+function renderTurnInfo(state) {
+  roundLabel.textContent = state.phase === 'playing' ? `Ronda ${state.round}` : '';
+  const currentId = state.turnOrder[state.currentTurnIndex];
+  const player = state.players.find((p) => p.id === currentId);
+  if (!player || state.phase !== 'playing') {
+    turnIndicator.innerHTML = '';
+    turnIndicator.classList.remove('mine');
+    btnEndTurn.disabled = true;
+    return;
+  }
+  const mine = currentId === myId;
+  turnIndicator.classList.toggle('mine', mine);
+  turnIndicator.innerHTML = `<span class="dot" style="color:${PLAYER_COLOR_HEX[player.color]}; background:${PLAYER_COLOR_HEX[player.color]}"></span>${mine ? 'Tu turno' : `Turno de ${escapeHtml(player.name)}`}`;
+  btnEndTurn.disabled = !mine;
+}
+
+// Estandarte que se desliza al cambiar el turno actual.
+function maybeShowTurnBanner(state) {
+  if (state.phase !== 'playing') { prevTurnPlayerId = null; return; }
+  const currentId = state.turnOrder[state.currentTurnIndex];
+  if (currentId === prevTurnPlayerId) return;
+  prevTurnPlayerId = currentId;
+
+  const player = state.players.find((p) => p.id === currentId);
+  if (!player) return;
+  const color = PLAYER_COLOR_HEX[player.color] || '#d8ad5c';
+  const mine = currentId === myId;
+  SFX.play(mine ? 'turn_mine' : 'turn_other');
+
+  turnBanner.style.setProperty('--banner-color', color);
+  turnBannerDot.style.background = color;
+  turnBannerText.textContent = mine ? 'Tu turno ha comenzado' : `Turno de ${player.name}`;
+
+  turnBanner.classList.remove('show');
+  // Forzar reflow para poder re-disparar la animación en turnos seguidos.
+  void turnBanner.offsetWidth;
+  turnBanner.classList.add('show');
+  clearTimeout(maybeShowTurnBanner._t);
+  maybeShowTurnBanner._t = setTimeout(() => turnBanner.classList.remove('show'), 1900);
+}
+
+// Estandarte central que marca el cierre de ronda y el cobro de oro.
+function showHarvestBanner() {
+  SFX.play('harvest');
+  harvestBanner.classList.remove('show');
+  void harvestBanner.offsetWidth;
+  harvestBanner.classList.add('show');
+  clearTimeout(showHarvestBanner._t);
+  showHarvestBanner._t = setTimeout(() => harvestBanner.classList.remove('show'), 1700);
+}
+
+// Estandarte de acciones: cola de mensajes (movimientos, combates, capturas,
+// clima, aparición de criaturas...) que se muestran uno tras otro con el
+// mismo estilo que el estandarte de turno.
+const eventBannerColors = {
+  'log-combat': 'var(--ember-bright)',
+  'log-capture': 'var(--gold-bright)',
+  'log-economy': '#4c9160',
+  'log-world': '#6fa8dc',
+  'log-move': 'var(--panel-border)',
+};
+let eventBannerQueue = [];
+let eventBannerBusy = false;
+
+function queueEventBanner(log) {
+  const text = describeLog(log);
+  if (!text) return;
+  const color = eventBannerColors[logClassFor(log.event)] || eventBannerColors['log-move'];
+  eventBannerQueue.push({ text, color });
+  if (!eventBannerBusy) showNextEventBanner();
+}
+
+function showNextEventBanner() {
+  const next = eventBannerQueue.shift();
+  if (!next) { eventBannerBusy = false; return; }
+  eventBannerBusy = true;
+
+  eventBanner.style.setProperty('--banner-color', next.color);
+  eventBannerDot.style.background = next.color;
+  eventBannerText.textContent = next.text;
+
+  eventBanner.classList.remove('show');
+  void eventBanner.offsetWidth;
+  eventBanner.classList.add('show');
+
+  clearTimeout(showNextEventBanner._t);
+  showNextEventBanner._t = setTimeout(() => {
+    eventBanner.classList.remove('show');
+    clearTimeout(showNextEventBanner._t2);
+    showNextEventBanner._t2 = setTimeout(showNextEventBanner, 350);
+  }, 1450);
+}
+
+// ================= RENDER: TABLERO =================
+
+function renderBoard(state) {
+  const size = state.boardSize;
+  const px = size * TILE_SIZE;
+  boardSvg.setAttribute('viewBox', `0 0 ${px} ${px}`);
+  boardSvg.setAttribute('width', px);
+  boardSvg.setAttribute('height', px);
+  boardSvg.innerHTML = '';
+
+  const reachableSet = new Set(reachableTiles.map((t) => `${t.x},${t.y}`));
+  const buildableFarmSet = new Set(buildableFarmTiles.map((t) => `${t.x},${t.y}`));
+  const newTileSig = new Map();
+  const claimedCells = [];
+
+  // Casillas
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const tile = state.tiles[y][x];
+      const key = `${x},${y}`;
+      if (tile.type === 'inaccessible') {
+        newTileSig.set(key, 'void'); // hueco: no se dibuja, se ve el fondo del SVG
+        continue;
+      }
+      const sig = `${tile.type}:${tile.owner || ''}`;
+      newTileSig.set(key, sig);
+      if (prevTileSig && prevTileSig.has(key) && prevTileSig.get(key) !== sig
+        && (tile.type === 'territory' || tile.type === 'farm' || tile.type === 'castle')) {
+        claimedCells.push({ x, y });
+      }
+
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', x * TILE_SIZE);
+      rect.setAttribute('y', y * TILE_SIZE);
+      rect.setAttribute('width', TILE_SIZE);
+      rect.setAttribute('height', TILE_SIZE);
+
+      const checker = (x + y) % 2 === 0 ? ' checker' : '';
+      let cls = 'tile' + checker + ' ' + (tile.type === 'farm' ? 'farm' : (tile.type === 'territory' ? 'territory' : 'neutral'));
+      const isReachable = reachableSet.has(key);
+      if (isReachable) cls += ' reachable';
+      rect.setAttribute('class', cls);
+
+      const ownerPlayer = tile.owner ? state.players.find((p) => p.id === tile.owner) : null;
+      if (ownerPlayer && (tile.type === 'territory' || tile.type === 'farm')) {
+        // Inline style, no atributo: así le gana a las reglas .tile.* del CSS.
+        rect.style.fill = tile.type === 'farm' ? shade(PLAYER_COLOR_HEX[ownerPlayer.color], 0.2) : PLAYER_COLOR_HEX[ownerPlayer.color];
+      }
+      if (isReachable) {
+        rect.addEventListener('click', () => {
+          reachableTiles = [];
+          socket.emit('action:move', { unitId: selectedUnitId, x, y });
+        });
+      }
+
+      const buildableSet = placingFarm ? buildableFarmSet : null;
+      if (buildableSet && buildableSet.has(key)) {
+        rect.classList.add('buildable');
+        rect.addEventListener('click', () => {
+          socket.emit('action:buildFarm', { castleId: pendingFarmCastleId, x, y });
+          cancelFarmPlacement();
+        });
+      }
+      boardSvg.appendChild(rect);
+
+      // Borde de acantilado en los lados que dan a un hueco.
+      [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(([dx, dy], i) => {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) return;
+        if (state.tiles[ny][nx].type !== 'inaccessible') return;
+        const x0 = x * TILE_SIZE;
+        const y0 = y * TILE_SIZE;
+        const pts = [[x0, y0, x0 + TILE_SIZE, y0], [x0 + TILE_SIZE, y0, x0 + TILE_SIZE, y0 + TILE_SIZE],
+          [x0, y0 + TILE_SIZE, x0 + TILE_SIZE, y0 + TILE_SIZE], [x0, y0, x0, y0 + TILE_SIZE]][i];
+        boardSvg.appendChild(svgEl('line', { x1: pts[0], y1: pts[1], x2: pts[2], y2: pts[3] }, 'cliff-edge'));
+      });
+
+      if (tile.type === 'castle') {
+        const castle = state.castles.find((c) => c.id === tile.occupantCastleId);
+        const cx = x * TILE_SIZE + TILE_SIZE / 2;
+        const cy = y * TILE_SIZE + TILE_SIZE / 2;
+        const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ring.setAttribute('cx', cx);
+        ring.setAttribute('cy', cy);
+        ring.setAttribute('r', TILE_SIZE / 2 - 4);
+        const cOwner = castle && castle.owner ? state.players.find((p) => p.id === castle.owner) : null;
+        ring.setAttribute('class', 'castle-badge' + (cOwner ? '' : ' neutral'));
+        if (cOwner) ring.setAttribute('stroke', PLAYER_COLOR_HEX[cOwner.color]);
+        boardSvg.appendChild(ring);
+
+        if (castle) {
+          const tower = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          tower.setAttribute('transform', `translate(${cx - 12}, ${cy - 12}) scale(1)`);
+          tower.setAttribute('fill', cOwner ? PLAYER_COLOR_HEX[cOwner.color] : '#5a6b7d');
+          tower.setAttribute('opacity', '0.9');
+          tower.innerHTML = UNIT_ICON_PATHS.torre;
+          boardSvg.appendChild(tower);
+        }
+
+
+        if (castle && cOwner && castle.owner === myId) {
+          if (selectedCastleId === castle.id || (selectedUnitId && (state.units.find((u) => u.id === selectedUnitId) || {}).castleId === castle.id)) {
+            boardSvg.appendChild(svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 1 }, 'castle-selected-ring'));
+          }
+          const chit = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 3 }, 'unit-hit castle-hit mine');
+          chit.addEventListener('click', () => selectCastle(castle.id));
+          boardSvg.appendChild(chit);
+        }
+
+        if (castle && castle.level > 1) {
+          const lvl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          lvl.setAttribute('x', cx + TILE_SIZE / 2 - 6);
+          lvl.setAttribute('y', y * TILE_SIZE + 9);
+          lvl.setAttribute('font-size', '9');
+          lvl.setAttribute('font-family', 'var(--font-display)');
+          lvl.setAttribute('fill', '#d8ad5c');
+          lvl.textContent = castle.level;
+          boardSvg.appendChild(lvl);
+        }
+      }
+      if (tile.type === 'farm') {
+        const fcx = x * TILE_SIZE + TILE_SIZE / 2;
+        const fcy = y * TILE_SIZE + TILE_SIZE / 2;
+
+        const farmIcon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        farmIcon.setAttribute('class', 'farm-badge');
+        farmIcon.setAttribute('fill', '#0c1119');
+        farmIcon.setAttribute('transform', `translate(${fcx - 10}, ${fcy - 10}) scale(0.83)`);
+        farmIcon.innerHTML =
+          '<path d="M4 20 V11 L12 5 L20 11 V20 Z" fill="currentColor"/>' +
+          '<rect x="9.3" y="13.6" width="5.4" height="6.4" fill="var(--panel-2)"/>';
+
+        boardSvg.appendChild(farmIcon);
+      }
+    }
+  }
+
+  renderWeather(state);
+
+  // Fichas
+  state.units.forEach((unit) => {
+    const cx = unit.x * TILE_SIZE + TILE_SIZE / 2;
+    const cy = unit.y * TILE_SIZE + TILE_SIZE / 2;
+    const owner = state.players.find((p) => p.id === unit.owner);
+    const isMine = unit.owner === myId;
+    const canMove = isMine && unit.type !== 'rey' && !unit.movedThisTurn && state.turnOrder[state.currentTurnIndex] === myId;
+    const selUnitForAttack = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
+    const isAttackable = !isMine && canAttackUnitWith(selUnitForAttack, unit, state);
+
+    if (unit.id === selectedUnitId) {
+      const selRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      selRing.setAttribute('cx', cx);
+      selRing.setAttribute('cy', cy);
+      selRing.setAttribute('r', TILE_SIZE / 2 - 2);
+      selRing.setAttribute('class', 'unit-hit selected-ring');
+      boardSvg.appendChild(selRing);
+    }
+
+    const posKey = `${unit.x},${unit.y}`;
+    const justMoved = prevUnitPos.has(unit.id) && prevUnitPos.get(unit.id) !== posKey;
+    prevUnitPos.set(unit.id, posKey);
+
+    const badge = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    badge.setAttribute('cx', cx);
+    badge.setAttribute('cy', cy);
+    badge.setAttribute('r', TILE_SIZE / 2 - 6);
+    badge.setAttribute('class', 'unit-badge' + (justMoved ? ' landed' : '') + (unit.type === 'fenix' ? ' phoenix' : (unit.type === 'dragon' ? ' dragon' : '')) + (isAttackable ? ' attackable-enemy' : ''));
+    if (unit.type === 'fenix') badge.style.animationDelay = phaseDelay(2.4);
+    badge.setAttribute('stroke', owner ? PLAYER_COLOR_HEX[owner.color] : '#888');
+    boardSvg.appendChild(badge);
+
+    const iconGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    iconGroup.setAttribute('class', 'unit-icon-group');
+    iconGroup.setAttribute('transform', `translate(${cx - 12}, ${cy - 12})`);
+    iconGroup.setAttribute('fill', '#ece3c9');
+    iconGroup.setAttribute('color', '#ece3c9');
+    iconGroup.innerHTML = unitIconMarkup(unit.type);
+    boardSvg.appendChild(iconGroup);
+
+    if (unit.maxHp) boardSvg.appendChild(hpBar(cx, cy + TILE_SIZE / 2 - 5, 24, unit.hp, unit.maxHp));
+    if (FLYING_TYPES.has(unit.type)) {
+      const wing = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 3 }, 'fly-ring');
+      boardSvg.appendChild(wing);
+    }
+
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    hit.setAttribute('cx', cx);
+    hit.setAttribute('cy', cy);
+    hit.setAttribute('r', TILE_SIZE / 2 - 2);
+    hit.setAttribute('class', 'unit-hit' + (isMine ? ' mine' : '') + (canMove ? ' movable' : '') + (isAttackable ? ' attackable-enemy' : ''));
+    hit.addEventListener('click', () => handleUnitClick(unit.id));
+    boardSvg.appendChild(hit);
+  });
+
+  renderCreature(state);
+
+  // Destellos de territorio recién reclamado.
+  claimedCells.forEach(({ x, y }) => spawnTileFx(x, y, 'tile-claim-fx'));
+
+  // Destellos de combate/conquista a partir de eventos de log pendientes.
+  const combatEvents = new Set([
+    'attackerWinsCastle', 'defenderWinsCastle', 'fieldCombatAttackerWins', 'fieldCombatDefenderWins',
+    'fieldCombatStandoff', 'castleStandoff', 'castleDefenderKilled', 'weatherKill',
+    'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'creatureDefeated', 'creatureTamed',
+    'attackUnitKilled', 'attackUnitHit',
+  ]);
+  pendingFx.forEach((log) => {
+    if (log.to && combatEvents.has(log.event)) spawnTileFx(log.to.x, log.to.y, 'combat-fx');
+    if (log.to && log.event === 'phoenixRevived') spawnTileFx(log.to.x, log.to.y, 'revive-fx');
+    if (log.to && log.event === 'creatureSpawned') spawnTileFx(log.to.x, log.to.y, 'spawn-fx');
+    if (log.to && log.dealt) spawnFloat(log.to.x, log.to.y, `-${log.dealt}`, 'float-dmg');
+    if (log.counter) {
+      let at = log.from;
+      if (log.type === 'attackCreature') {
+        const u = state.units.find((uu) => uu.id === log.unitId);
+        at = u ? { x: u.x, y: u.y } : null;
+      }
+      if (at) spawnFloat(at.x, at.y, `-${log.counter}`, 'float-dmg counter');
+    }
+    if (log.goldReward) spawnFloat(log.to.x, log.to.y, `+${log.goldReward}`, 'float-gold');
+  });
+  pendingFx = [];
+
+  prevTileSig = newTileSig;
+}
+
+function spawnTileFx(x, y, className) {
+  const cx = x * TILE_SIZE + TILE_SIZE / 2;
+  const cy = y * TILE_SIZE + TILE_SIZE / 2;
+  const fx = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  fx.setAttribute('x', x * TILE_SIZE + 2);
+  fx.setAttribute('y', y * TILE_SIZE + 2);
+  fx.setAttribute('width', TILE_SIZE - 4);
+  fx.setAttribute('height', TILE_SIZE - 4);
+  fx.setAttribute('class', className);
+  fx.style.transformBox = 'fill-box';
+  boardSvg.appendChild(fx);
+  setTimeout(() => fx.remove(), 750);
+}
+
+function spawnFloat(x, y, text, cls) {
+  const t = svgEl('text', { x: x * TILE_SIZE + TILE_SIZE / 2, y: y * TILE_SIZE + 12, 'text-anchor': 'middle' }, cls);
+  t.textContent = text;
+  boardSvg.appendChild(t);
+  setTimeout(() => t.remove(), 1100);
+}
+
+// Zona 3x3 de clima: velo de color por casilla accesible + partículas animadas.
+function renderWeather(state) {
+  const w = state.activeWeather;
+  if (!w) return;
+  const info = WEATHER_INFO[w.type] || WEATHER_INFO.electrica;
+  const g = svgEl('g', {}, `weather weather-${w.type}`);
+  g.style.pointerEvents = 'none';
+  for (let dy = 0; dy < w.size; dy++) {
+    for (let dx = 0; dx < w.size; dx++) {
+      const x = w.x + dx;
+      const y = w.y + dy;
+      const tile = state.tiles[y] && state.tiles[y][x];
+      if (!tile || tile.type === 'inaccessible') continue;
+      const px = x * TILE_SIZE;
+      const py = y * TILE_SIZE;
+      const veil = svgEl('rect', { x: px, y: py, width: TILE_SIZE, height: TILE_SIZE }, 'weather-veil');
+      veil.setAttribute('fill', info.color);
+      g.appendChild(veil);
+      const seed = x * 7 + y * 13;
+      if (w.type === 'nieve') {
+        for (let i = 0; i < 4; i++) {
+          const fx = px + 5 + ((seed + i * 9) % (TILE_SIZE - 10));
+          const flake = svgEl('circle', { cx: fx, cy: py + 2, r: 1.4 + (i % 2) * 0.6 }, 'snow-flake');
+          flake.style.animationDuration = `${2 + (i % 3) * 0.6}s`;
+          flake.style.animationDelay = phaseDelay(2.6, i + seed);
+          g.appendChild(flake);
+        }
+      } else if (w.type === 'arena') {
+        for (let i = 0; i < 3; i++) {
+          const ly = py + 8 + ((seed + i * 11) % (TILE_SIZE - 16));
+          const streak = svgEl('line', { x1: px + 2, y1: ly, x2: px + 14, y2: ly }, 'sand-streak');
+          streak.style.animationDuration = `${1.6 + i * 0.3}s`;
+          streak.style.animationDelay = phaseDelay(2, i + seed);
+          g.appendChild(streak);
+        }
+      } else {
+        if ((x + y) % 2 === 0) {
+          const bolt = svgEl('path', { d: `M${px + 22} ${py + 4} L${px + 15} ${py + 21} L${px + 21} ${py + 21} L${px + 16} ${py + 36}` }, 'bolt');
+          bolt.style.animationDelay = phaseDelay(1.4, seed);
+          g.appendChild(bolt);
+        }
+      }
+    }
+  }
+  // Marco de la zona.
+  const frame = svgEl('rect', { x: w.x * TILE_SIZE + 1, y: w.y * TILE_SIZE + 1, width: w.size * TILE_SIZE - 2, height: w.size * TILE_SIZE - 2, rx: 3 }, 'weather-frame');
+  frame.setAttribute('stroke', info.color);
+  g.appendChild(frame);
+  boardSvg.appendChild(g);
+}
+
+function canAttackCreatureWith(unit, state) {
+  const c = state.activeCreature;
+  if (!c || !unit) return false;
+  const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
+  const dx = Math.abs(unit.x - c.x);
+  const dy = Math.abs(unit.y - c.y);
+  return isMyTurn && unit.owner === myId && unit.type !== 'rey' && !unit.attackedThisTurn
+    && dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+}
+
+function attackCreatureWith(unitId) {
+  socket.emit('action:attackCreature', { unitId });
+}
+
+function renderCreature(state) {
+  const c = state.activeCreature;
+  if (!c) return;
+  const info = CREATURE_INFO[c.type] || CREATURE_INFO.lobo;
+  const cx = c.x * TILE_SIZE + TILE_SIZE / 2;
+  const cy = c.y * TILE_SIZE + TILE_SIZE / 2;
+  const selUnit = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
+  const attackable = canAttackCreatureWith(selUnit, state);
+
+  const g = svgEl('g', {}, 'creature-token' + (attackable ? ' attackable' : ''));
+  g.style.setProperty('--creature-color', info.color);
+
+  const aura = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 1 }, 'creature-aura');
+  aura.style.animationDelay = phaseDelay(2.2);
+  g.appendChild(aura);
+  const badge = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 5 }, 'creature-badge');
+  badge.setAttribute('stroke', info.color);
+  g.appendChild(badge);
+  const icon = svgEl('g', { transform: `translate(${cx - 12}, ${cy - 12})`, fill: info.color, color: info.color }, 'creature-icon');
+  icon.innerHTML = unitIconMarkup(c.type);
+  g.appendChild(icon);
+  g.appendChild(hpBar(cx, cy + TILE_SIZE / 2 - 5, 28, c.hp, c.maxHp));
+
+  const tag = svgEl('text', { x: cx, y: c.y * TILE_SIZE + 8, 'text-anchor': 'middle' }, 'creature-tag');
+  tag.textContent = `${c.atk}⚔ ${c.hp}♥`;
+  g.appendChild(tag);
+
+  const hit = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 1 }, 'unit-hit creature-hit');
+  hit.addEventListener('click', () => {
+    if (attackable) attackCreatureWith(selUnit.id);
+    else inspectCreature();
+  });
+  g.appendChild(hit);
+  boardSvg.appendChild(g);
+}
+
+function shade(hex, amount) {
+  // Oscurece un color hex mezclándolo hacia negro en `amount` (0-1, 0 = sin cambio).
+  if (!hex) return '#333';
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * (1 - amount));
+  const g = Math.round(((n >> 8) & 255) * (1 - amount));
+  const b = Math.round((n & 255) * (1 - amount));
+  return `rgb(${r},${g},${b})`;
+}
+
+// ================= SELECCIÓN Y ACCIONES =================
+
+// Ataque a distancia corta (sin moverse, sin contraataque) contra una ficha
+// rival adyacente. Igual patrón que atacar a una criatura adyacente.
+function canAttackUnitWith(unit, target, state) {
+  if (!unit || !target) return false;
+  const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
+  if (!isMyTurn || unit.owner !== myId || target.owner === myId) return false;
+  if (unit.type === 'rey' || unit.attackedThisTurn) return false;
+  const dx = Math.abs(unit.x - target.x);
+  const dy = Math.abs(unit.y - target.y);
+  return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+}
+
+function attackUnitWith(unitId, targetId) {
+  socket.emit('action:attackUnit', { unitId, targetId });
+}
+
+// Click en una ficha ajena (rival o neutral): si tengo una ficha propia
+// seleccionada y adyacente, ataca; si no, solo muestra su información.
+function handleUnitClick(unitId) {
+  const unit = currentState.units.find((u) => u.id === unitId);
+  if (!unit) return;
+  if (unit.owner === myId) { selectUnit(unitId); return; }
+
+  const selUnit = selectedUnitId ? currentState.units.find((u) => u.id === selectedUnitId) : null;
+  if (canAttackUnitWith(selUnit, unit, currentState)) {
+    attackUnitWith(selUnit.id, unit.id);
+    return;
+  }
+  inspectUnit(unitId);
+}
+
+function inspectUnit(unitId) {
+  inspectedUnitId = unitId;
+  inspectedCreature = false;
+  renderSelection();
+}
+
+function inspectCreature() {
+  inspectedCreature = true;
+  inspectedUnitId = null;
+  renderSelection();
+}
+
+function selectUnit(unitId) {
+  const unit = currentState.units.find((u) => u.id === unitId);
+  if (!unit || unit.owner !== myId) return;
+  cancelFarmPlacement();
+  inspectedUnitId = null;
+  inspectedCreature = false;
+  selectedCastleId = null;
+  if (selectedUnitId === unitId) {
+    SFX.play('deselect');
+    selectedUnitId = null;
+    reachableTiles = [];
+  } else {
+    SFX.play('select_unit');
+    selectedUnitId = unitId;
+    reachableTiles = [];
+    const isMyTurn = currentState.turnOrder[currentState.currentTurnIndex] === myId;
+    if (isMyTurn && unit.type !== 'rey' && !unit.movedThisTurn) {
+      socket.emit('action:getReachable', { unitId });
+    }
+  }
+  renderBoard(currentState);
+  renderSelection();
+}
+
+function selectCastle(castleId) {
+  const castle = currentState.castles.find((c) => c.id === castleId);
+  if (!castle || castle.owner !== myId) return;
+  cancelFarmPlacement();
+  selectedUnitId = null;
+  inspectedUnitId = null;
+  inspectedCreature = false;
+  reachableTiles = [];
+  SFX.play(selectedCastleId === castleId ? 'deselect' : 'select_castle');
+  selectedCastleId = selectedCastleId === castleId ? null : castleId;
+  renderBoard(currentState);
+  renderSelection();
+}
+
+function renderSelection() {
+  if (!currentState) return;
+  const unit = selectedUnitId ? currentState.units.find((u) => u.id === selectedUnitId) : null;
+  const isMyTurn = currentState.turnOrder[currentState.currentTurnIndex] === myId;
+  const myPlayer = currentState.players.find((p) => p.id === myId);
+
+  // Castillo activo: el seleccionado directamente, o el que guarnece la ficha seleccionada.
+  let castle = null;
+  if (unit && unit.castleId) castle = currentState.castles.find((c) => c.id === unit.castleId) || null;
+  else if (!unit && selectedCastleId) castle = currentState.castles.find((c) => c.id === selectedCastleId) || null;
+  if (castle && castle.owner !== myId) castle = null;
+
+  if (!unit && !castle) {
+    if (inspectedCreature && currentState.activeCreature) {
+      const c = currentState.activeCreature;
+      selectionBox.innerHTML = `
+        <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+          <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(c.type)}</svg>
+          <span>${UNIT_LABELS[c.type]}</span>
+        </div>
+        <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">Neutral</b></div>
+        <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${UNIT_LABELS[c.type]}</b></div>
+        <div class="stat-chips" style="margin-top:6px;">
+          <span class="chip chip-atk" title="Ataque"><b>${c.atk}</b> ATQ</span>
+          <span class="chip chip-hp" title="Vida"><b>${c.hp}</b>/${c.maxHp} VIDA</span>
+        </div>
+      `;
+      castleActions.style.display = 'none';
+      return;
+    }
+    if (inspectedUnitId) {
+      const target = currentState.units.find((u) => u.id === inspectedUnitId);
+      if (target) {
+        const owner = currentState.players.find((p) => p.id === target.owner);
+        selectionBox.innerHTML = `
+          <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+            <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(target.type)}</svg>
+            <span>${UNIT_LABELS[target.type]}</span>
+          </div>
+          <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">${owner ? escapeHtml(owner.name) : 'Desconocido'}</b></div>
+          <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${UNIT_LABELS[target.type]}</b></div>
+          <div class="stat-chips" style="margin-top:6px;">
+            <span class="chip chip-atk" title="Ataque"><b>${target.atk}</b> ATQ</span>
+            <span class="chip chip-hp" title="Vida"><b>${target.hp}</b>/${target.maxHp} VIDA</span>
+          </div>
+        `;
+        castleActions.style.display = 'none';
+        return;
+      }
+    }
+    selectionBox.innerHTML = '<span class="empty">Elegí una ficha o un castillo propio en el tablero</span>';
+    castleActions.style.display = 'none';
+    return;
+  }
+
+  if (!unit) {
+    const info = CASTLE_LEVEL_INFO[castle.level];
+    selectionBox.innerHTML = `
+      <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+        <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup('torre')}</svg>
+        <span>Castillo #${castle.id}${castle.hasKing ? ' (Rey)' : ''}</span>
+      </div>
+      <div class="stat-chips">
+        <span class="chip"><b>Nv ${castle.level}</b></span>
+        <span class="chip"><b>+${info.goldPerTurn}</b> oro/ronda</span>
+        <span class="chip"><b>${castle.garrison.length}</b>/${info.militaryCapacity} tropas</span>
+        <span class="chip"><b>${castle.farms}</b>/${info.maxFarms} granjas</span>
+      </div>`;
+  } else selectionBox.innerHTML = `
+    <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+      <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(unit.type)}</svg>
+      <span>${UNIT_LABELS[unit.type]}</span>
+    </div>
+    <div class="stat-chips">
+      <span class="chip chip-atk" title="Ataque"><b>${unit.atk}</b> ATQ</span>
+      <span class="chip chip-hp" title="Vida"><b>${unit.hp}</b>/${unit.maxHp} VIDA</span>
+    </div>
+    <div class="sel-hpbar"><i style="width:${Math.round((unit.hp / unit.maxHp) * 100)}%; background:${hpColor(unit.hp / unit.maxHp)}"></i></div>
+    <div style="color:var(--ink-dim); font-size:12px; margin-top:6px;">
+      ${unit.type === 'rey' ? 'El Rey permanece en su castillo' : (unit.movedThisTurn ? 'Ya se movió este turno' : 'Puede moverse')}
+      ${unit.type === 'fenix' ? `<br><span class="phoenix-note">${(currentState.players.find((p) => p.id === unit.owner) || {}).phoenixRevived ? 'Resurrección ya usada' : 'Resurrección disponible (10 de oro, castillo neutral)'}</span>` : ''}
+      ${FLYING_TYPES.has(unit.type) ? '<br>Vuela sobre los abismos' : ''}
+    </div>
+    ${canAttackCreatureWith(unit, currentState) ? `<button class="action-btn attack-btn" id="btnAttackCreature" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[currentState.activeCreature.type]}</span><span class="cost">-${unit.atk} vida</span></button>` : ''}
+    ${unit.attackedThisTurn && currentState.activeCreature && unit.type !== 'rey' ? '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>' : ''}
+  `;
+  const atkBtn = document.getElementById('btnAttackCreature');
+  if (atkBtn) atkBtn.onclick = () => attackCreatureWith(unit.id);
+
+  if (castle && isMyTurn) {
+    castleActions.style.display = 'block';
+    renderProduceGrid(castle, myPlayer);
+
+    const inPlacement = placingFarm && pendingFarmCastleId === castle.id;
+    const farmMax = CASTLE_LEVEL_INFO[castle.level].maxFarms;
+    const farmDisabled = !myPlayer || myPlayer.gold < FARM_COST || castle.farms >= farmMax;
+    btnBuildFarm.disabled = farmDisabled && !inPlacement;
+    btnBuildFarm.querySelector('span:first-child').textContent = inPlacement ? 'Cancelar selección' : 'Construir granja';
+    btnBuildFarm.querySelector('.cost').textContent = inPlacement ? '' : (castle.farms >= farmMax ? `Máx. ${farmMax}` : `${FARM_COST} oro`);
+    btnBuildFarm.onclick = () => {
+      if (inPlacement) {
+        cancelFarmPlacement();
+        renderBoard(currentState);
+        renderSelection();
+      } else {
+        SFX.play('ui_click');
+        pendingFarmCastleId = castle.id;
+        socket.emit('action:getBuildableFarmTiles');
+      }
+    };
+
+    const nextCost = CASTLE_UPGRADE_COST[castle.level + 1];
+    if (nextCost === undefined) {
+      btnUpgrade.disabled = true;
+      btnUpgrade.querySelector('.cost').textContent = 'Nivel máx.';
+    } else {
+      btnUpgrade.disabled = !myPlayer || myPlayer.gold < nextCost;
+      btnUpgrade.querySelector('.cost').textContent = `${nextCost} oro`;
+      btnUpgrade.onclick = () => socket.emit('action:upgradeCastle', { castleId: castle.id });
+    }
+  } else {
+    castleActions.style.display = 'none';
+  }
+}
+
+function renderProduceGrid(castle, myPlayer) {
+  produceGrid.innerHTML = '';
+  Object.keys(UNIT_COSTS).forEach((type) => {
+    const cost = UNIT_COSTS[type];
+    const btn = document.createElement('button');
+    btn.className = 'action-btn';
+    btn.innerHTML = `<span style="display:flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" fill="var(--gold)" color="var(--gold)">${unitIconMarkup(type)}</svg>${UNIT_LABELS[type]}</span><span class="cost">${cost}</span>`;
+    const full = castle.garrison.length >= CASTLE_LEVEL_INFO[castle.level].militaryCapacity;
+    btn.disabled = !myPlayer || myPlayer.gold < cost || full;
+    if (full) btn.title = 'Capacidad militar llena';
+    btn.addEventListener('click', () => {
+      socket.emit('action:produce', { castleId: castle.id, unitType: type });
+    });
+    produceGrid.appendChild(btn);
+  });
+}
+
+btnEndTurn.addEventListener('click', () => {
+  SFX.play('end_turn');
+  selectedUnitId = null;
+  selectedCastleId = null;
+  cancelFarmPlacement();
+  reachableTiles = [];
+  socket.emit('action:endTurn');
+});
+
+// ================= LOG Y TOAST =================
+
+const COMBAT_EVENTS = new Set([
+  'attackerWinsCastle', 'defenderWinsCastle', 'fieldCombatAttackerWins', 'fieldCombatDefenderWins',
+  'fieldCombatStandoff', 'castleStandoff', 'castleDefenderKilled',
+  'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'weatherKill',
+  'attackUnitKilled', 'attackUnitHit',
+]);
+const CAPTURE_EVENTS = new Set([
+  'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
+  'creatureDefeated', 'creatureTamed', 'phoenixRevived',
+]);
+const WORLD_EVENTS = new Set(['creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost']);
+
+function logClassFor(event) {
+  if (COMBAT_EVENTS.has(event)) return 'log-combat';
+  if (CAPTURE_EVENTS.has(event)) return 'log-capture';
+  if (WORLD_EVENTS.has(event)) return 'log-world';
+  if (event === 'garrisoned' || event === 'healed') return 'log-economy';
+  return 'log-move';
+}
+
+function pos(p) { return p ? `(${p.x},${p.y})` : ''; }
+function dmgText(log) {
+  const parts = [];
+  if (log.dealt) parts.push(`-${log.dealt} al rival`);
+  if (log.counter) parts.push(`-${log.counter} de contraataque`);
+  return parts.length ? ` [${parts.join(', ')}]` : '';
+}
+function label(t) { return UNIT_LABELS[t] || t; }
+
+function describeLog(log) {
+  const from = pos(log.from);
+  const to = pos(log.to);
+  switch (log.event) {
+    case 'castleCaptured': return `Castillo #${log.castleId} conquistado sin resistencia, ${from} → ${to}`;
+    case 'neutralCastleCaptured': return `Castillo neutral #${log.castleId} ocupado, ${from} → ${to}`;
+    case 'garrisoned': return `Ficha guarnecida en castillo #${log.castleId}`;
+    case 'attackerWinsCastle': return `Castillo #${log.castleId} tomado: cae ${label(log.defenderType)}${dmgText(log)}`;
+    case 'castleDefenderKilled': return `Cae ${label(log.defenderType)} en el castillo #${log.castleId}, pero quedan defensores${dmgText(log)}`;
+    case 'castleStandoff': return `Asalto al castillo #${log.castleId}: ambos resisten${dmgText(log)}`;
+    case 'defenderWinsCastle': return `Asalto rechazado en castillo #${log.castleId}: el atacante cae${log.attackerRevived ? ' (el Fénix resucita)' : ''}${dmgText(log)}`;
+    case 'fieldCombatAttackerWins': return `Combate en campo abierto ganado: cae ${label(log.defenderType)}${dmgText(log)}`;
+    case 'fieldCombatDefenderWins': return `Combate en campo abierto perdido: el atacante cae${log.attackerRevived ? ' (el Fénix resucita)' : ''}${dmgText(log)}`;
+    case 'fieldCombatStandoff': return `Combate en campo abierto: ambos sobreviven${dmgText(log)}`;
+    case 'farmCaptured': return `Granja capturada en ${to}`;
+    case 'moved': return `Movimiento ${from} → ${to}`;
+
+    case 'creatureSpawned': return `Aparece ${label(log.creature.type)} en ${to}`;
+    case 'creatureSurvived': return `${label(log.unitType)} golpea a ${label(log.creatureType)}${dmgText(log)}; le quedan ${log.creatureHpRemaining} de vida`;
+    case 'attackerLostToCreature': return `${label(log.unitType)} cae ante ${label(log.creatureType)}${dmgText(log)}`;
+    case 'attackerRevived': return `${label(log.unitType)} cae ante ${label(log.creatureType)}, ¡pero el Fénix resucita!`;
+    case 'creatureDefeated': return `${label(log.creatureType)} derrotado: +${log.goldReward} de oro`;
+    case 'creatureTamed': return `¡${label(log.creatureType)} domado! Se une como tropa en ${to}`;
+
+    case 'weatherSpawned': return `${(WEATHER_INFO[log.weather.type] || {}).label || 'Clima'} sobre la zona (${log.weather.x},${log.weather.y}) — 3x3`;
+    case 'weatherEnded': return `Se disipa: ${(WEATHER_INFO[log.weather.type] || {}).label || 'el clima'}`;
+    case 'weatherKill': return `${label(log.unitType)} sucumbe al clima en ${to}`;
+
+    case 'phoenixRevived': return `¡El Fénix renace en el castillo neutral #${log.castleId}! (-10 de oro)`;
+    case 'phoenixLost': {
+      const why = { yaUsada: 'ya usó su resurrección', sinOro: 'no hay 10 de oro', sinCastillo: 'no queda ningún castillo neutral' }[log.reason] || 'no pudo resucitar';
+      return `El Fénix se pierde para siempre (${why})`;
+    }
+    case 'healed': return `Fin de ronda: ${log.count} tropa(s) curada(s) en castillo`;
+
+    case 'attackUnitKilled': return `${label(log.unitType)} elimina a ${label(log.targetType)}${dmgText(log)}${log.targetRevived ? ' (el Fénix resucita)' : ''}`;
+    case 'attackUnitHit': return `${label(log.unitType)} golpea a ${label(log.targetType)}${dmgText(log)}; le quedan ${log.targetHpRemaining} de vida`;
+    default:
+      if (log.type === 'produce') return `Ficha producida: ${label(log.unitType)}`;
+      if (log.type === 'buildFarm') return `Granja construida`;
+      if (log.type === 'upgradeCastle') return `Castillo mejorado a nivel ${log.newLevel}`;
+      return from && to ? `Movimiento ${from} → ${to}` : 'Acción';
+  }
+}
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}

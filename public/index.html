@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reino en Juego</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <div class="bg-veil"></div>
+
+  <!-- ---------- LOBBY ---------- -->
+  <div id="lobby-screen">
+
+    <!-- Vista A: todavía no existe sala -> quien la ve primero la crea y es el líder -->
+    <div class="lobby-card" id="createCard">
+      <div class="crest">
+        <svg viewBox="0 0 64 72" width="52" height="58">
+          <path d="M32 2 L60 12 V34 C60 52 48 64 32 70 C16 64 4 52 4 34 V12 Z" class="crest-shield"/>
+          <path d="M32 10 L26 22 L14 24 L23 32 L20 44 L32 38 L44 44 L41 32 L50 24 L38 22 Z" class="crest-mark"/>
+        </svg>
+      </div>
+      <h1 class="lobby-title">Reino en Juego</h1>
+      <p class="lobby-subtitle">Conquistá castillos, reclamá territorio y derribá al resto de los reyes.</p>
+
+      <div class="lobby-row">
+        <div class="field">
+          <label for="playerCount">Jugadores en la partida (2–8)</label>
+          <input id="playerCount" type="number" min="2" max="8" value="4" />
+        </div>
+        <button id="btnSetCount" class="btn-primary">Crear partida</button>
+      </div>
+
+      <div class="lobby-status" id="createStatus">Conectando…</div>
+    </div>
+
+    <!-- Vista B: sala de espera, ya asignado como jugador -->
+    <div class="lobby-card lobby-room-card" id="roomCard" style="display:none;">
+      <h1 class="lobby-title">Sala de espera</h1>
+      <p class="lobby-subtitle" id="roomSubtitle"></p>
+
+      <div class="field">
+        <label for="myNameInput">Tu nombre</label>
+        <input id="myNameInput" type="text" maxlength="20" />
+      </div>
+
+      <div class="field">
+        <label>Tu color</label>
+        <div class="color-picker" id="colorPicker"></div>
+      </div>
+
+      <div class="room-players" id="roomPlayers"></div>
+
+      <button class="btn-primary" id="btnReady" style="width:100%; margin-top:16px;"></button>
+      <button class="btn-primary btn-start" id="btnStartGame" style="width:100%; margin-top:10px; display:none;">Iniciar partida</button>
+
+      <div class="lobby-status" id="roomStatus"></div>
+    </div>
+  </div>
+
+  <!-- ---------- JUEGO ---------- -->
+  <div id="game-screen">
+    <div class="topbar">
+      <span class="title">Reino en Juego</span>
+      <span class="round-label" id="roundLabel"></span>
+      <span class="turn-indicator" id="turnIndicator"></span>
+    </div>
+
+    <div class="turn-banner" id="turnBanner">
+      <div class="turn-banner-inner">
+        <span class="turn-banner-dot" id="turnBannerDot"></span>
+        <span class="turn-banner-text" id="turnBannerText"></span>
+      </div>
+    </div>
+
+    <div class="turn-banner event-banner" id="eventBanner">
+      <div class="turn-banner-inner">
+        <span class="turn-banner-dot" id="eventBannerDot"></span>
+        <span class="turn-banner-text" id="eventBannerText"></span>
+      </div>
+    </div>
+
+    <div class="harvest-banner" id="harvestBanner">
+      <div class="harvest-banner-inner">
+        <svg class="harvest-coin" viewBox="0 0 24 24" width="20" height="20">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2"/>
+          <circle cx="12" cy="12" r="3.6" fill="currentColor"/>
+        </svg>
+        <span>Recolectando recursos…</span>
+      </div>
+    </div>
+
+    <div id="players-panel">
+      <p class="panel-heading">Jugadores</p>
+      <div id="playersList"></div>
+      <p class="panel-heading" style="margin-top:16px;">Mundo</p>
+      <div id="worldInfo"></div>
+    </div>
+
+    <div id="board-wrap">
+      <svg id="board-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+
+    <div id="actions-panel">
+      <p class="waiting-msg">Esperando el turno de otro jugador…</p>
+      <div>
+        <p class="section-title">Selección</p>
+        <div class="selection-box" id="selectionBox"><span class="empty">Elegí una ficha propia en el tablero</span></div>
+      </div>
+
+      <div id="castleActions" style="display:none;">
+        <p class="section-title">Castillo</p>
+        <div class="produce-grid" id="produceGrid"></div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+          <button class="action-btn" id="btnBuildFarm"><span>Construir granja</span><span class="cost"></span></button>
+          <button class="action-btn" id="btnUpgrade"><span>Mejorar castillo</span><span class="cost"></span></button>
+        </div>
+      </div>
+
+      <div class="end-turn-group">
+        <p class="pass-hint">No es obligatorio mover fichas, producir, construir ni mejorar: podés terminar el turno en cualquier momento.</p>
+        <button class="end-turn-btn" id="btnEndTurn"><span>Terminar turno</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gameover-overlay">
+    <div class="gameover-card">
+      <svg class="crown" viewBox="0 0 24 24" width="46" height="46">
+        <path d="M3 17 L3 11 L6.5 13.5 L9 8 L12 12 L15 8 L17.5 13.5 L21 11 L21 17 Z" fill="currentColor"/>
+        <rect x="3" y="17" width="18" height="2.4" fill="currentColor"/>
+        <circle cx="12" cy="8" r="1.3" fill="currentColor"/>
+      </svg>
+      <h2 id="gameoverTitle">Fin de la partida</h2>
+      <p id="gameoverSubtitle"></p>
+      <button class="btn-primary" onclick="location.reload()">Volver al lobby</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/sound.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -22,6 +22,13 @@ function boardSizeFor(playerCount) {
   return 25;
 }
 
+// Máximo de criaturas neutrales simultáneas: 1 por cada 2 jugadores de la
+// partida (1-2: 1, 3-4: 2, 5-6: 3, 7-8: 4). Se calcula con el total de
+// jugadores (maxPlayers), no con los que sigan vivos.
+function maxCreaturesFor(playerCount) {
+  return Math.ceil(playerCount / 2);
+}
+
 const BOARD_CONFIG = {
   small: { size: 13 },
   medium: { size: 17 },
@@ -238,8 +245,8 @@ function createGameState(playerCount) {
     farms: [],
     farmIdCounter: 1,
     winner: null,
-    // Criaturas neutrales (ver creatures.js)
-    activeCreature: null,
+    // Criaturas neutrales (ver creatures.js). Tope: maxCreaturesFor(maxPlayers)
+    activeCreatures: [],
     creatureIdCounter: 1,
     turnCounter: 0, // cuenta turnos individuales jugados (no rondas)
     // Clima (ver weather.js)
@@ -368,6 +375,7 @@ module.exports = {
   MAX_PLAYERS,
   BOARD_CONFIG,
   getBoardConfig,
+  maxCreaturesFor,
   RANKS,
   CASTLE_LEVELS,
   PLAYER_COLORS,

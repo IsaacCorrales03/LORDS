@@ -52,7 +52,7 @@ function serializeState(s) {
     units: s.units,
     farms: s.farms,
     winner: s.winner,
-    activeCreature: s.activeCreature,
+    activeCreatures: s.activeCreatures,
     activeWeather: s.activeWeather,
     turnCounter: s.turnCounter,
   };
@@ -97,7 +97,7 @@ io.on('connection', (socket) => {
   broadcastState();
 
   // El primer jugador en conectarse (sin sala aún) crea la partida y se
-  // convierte en el líder: define cuántos jugadores tendrá (2-6).
+  // convierte en el líder: define cuántos jugadores tendrá (2-8).
   socket.on('lobby:setPlayerCount', (count) => {
     if (state) {
       socket.emit('error:message', 'La partida ya fue inicializada.');

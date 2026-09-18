@@ -31,8 +31,7 @@ function unitAt(state, x, y) {
 }
 
 function creatureAt(state, x, y) {
-  const c = state.activeCreature;
-  return c && c.x === x && c.y === y ? c : null;
+  return state.activeCreatures.find((c) => c.x === x && c.y === y) || null;
 }
 
 // --- Fase 1: obtener oro ---

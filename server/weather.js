@@ -3,7 +3,7 @@
 // en una zona aleatoria de 3x3. Uno solo a la vez; dura 2 turnos. Mientras
 // está activo, las fichas dentro de la zona pierden 1 de vida por turno
 // (se recalcula en vivo: solo cuenta quien esté dentro en ese momento).
-// Las tres variantes (eléctrica, nieve, arena) hoy tienen el mismo efecto.
+// Las cinco variantes (eléctrica, nieve, arena, fuego, niebla) hoy tienen el mismo efecto.
 
 const { isAccessibleTile } = require('./terrain');
 const { killUnit, queueEvent } = require('./units');
@@ -13,7 +13,7 @@ const WEATHER_INTERVAL_TURNS = 3;
 const WEATHER_DURATION_TURNS = 2;
 const WEATHER_DAMAGE = 1;
 const WEATHER_SIZE = 3;
-const WEATHER_TYPES = ['electrica', 'nieve', 'arena'];
+const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'fuego', 'niebla'];
 
 function isInZone(w, x, y) {
   return x >= w.x && x < w.x + w.size && y >= w.y && y < w.y + w.size;

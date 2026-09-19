@@ -55,7 +55,7 @@ function playerNameOf(id) {
   return p ? p.name : 'Un jugador';
 }
 
-const UNIT_COSTS = { peon: 10, caballo: 30, alfil: 60, torre: 100, reina: 150 };
+const UNIT_COSTS = { peon: 8, caballo: 25, alfil: 50, torre: 85, reina: 125 };
 const CASTLE_UPGRADE_COST = { 2: 15, 3: 50 };
 const FARM_COST = 20;
 const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'pink'];
@@ -738,6 +738,18 @@ function renderBoard(state) {
     }
   }
 
+  // Cofres del tesoro
+  (state.chests || []).forEach((ch) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'chest-badge');
+    g.setAttribute('transform', `translate(${ch.x * TILE_SIZE + TILE_SIZE / 2 - 12}, ${ch.y * TILE_SIZE + TILE_SIZE / 2 - 11})`);
+    g.innerHTML = '<rect x="2" y="9" width="20" height="12" rx="1.5" fill="#8a5a2b" stroke="#3b2410" stroke-width="1.2"/>'
+      + '<path d="M2 10a10 7 0 0 1 20 0z" fill="#b57a3a" stroke="#3b2410" stroke-width="1.2"/>'
+      + '<rect x="2" y="12" width="20" height="2.2" fill="#e5b93f"/><rect x="10" y="10.5" width="4" height="6" rx="0.8" fill="#f0c877" stroke="#3b2410" stroke-width="0.8"/>'
+      + '<circle cx="12" cy="13.4" r="0.9" fill="#3b2410"/>';
+    boardSvg.appendChild(g);
+  });
+
   renderWeather(state);
 
   // Fichas
@@ -1325,7 +1337,7 @@ const CAPTURE_EVENTS = new Set([
   'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
   'creatureDefeated', 'creatureTamed', 'phoenixRevived',
 ]);
-const WORLD_EVENTS = new Set(['creatureDespawned', 'weatherHeal', 'weatherGold', 'turnTimeout', 'creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
+const WORLD_EVENTS = new Set(['chestSpawned', 'chestCollected', 'creatureDespawned', 'weatherHeal', 'weatherGold', 'turnTimeout', 'creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
 
 function logClassFor(event) {
   if (COMBAT_EVENTS.has(event)) return 'log-combat';
@@ -1374,6 +1386,8 @@ function describeLog(log) {
     case 'disconnect': return `${playerNameOf(log.playerId)} se desconectó y queda fuera de la partida`;
     case 'weatherKill': return `${label(log.unitType)} sucumbe al clima en ${to}`;
 
+    case 'chestSpawned': return `Un cofre del tesoro aparece en ${to}`;
+    case 'chestCollected': return `${playerNameOf(log.playerId)} abre un cofre: +${log.gold} de oro`;
     case 'creatureDespawned': return `${label(log.creature.type)} se marcha del tablero tras 10 rondas`;
     case 'weatherHeal': return `Lluvia sanadora: ${log.count} ficha(s) recuperan vida`;
     case 'weatherGold': return `${playerNameOf(log.playerId)} gana +${log.gold} de oro bajo la aurora`;
@@ -1407,3 +1421,100 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+
+// ===================== Pantalla de reglas =====================
+const RULES_SLIDES = [
+  { title: 'Objetivo', body: `<p>Tu <b>Rey</b> vive en tu castillo inicial y no se mueve.</p>
+    <p>Quedás eliminado si <b>tu Rey cae</b> o si <b>te quitan ese castillo</b>. Gana el <b>último jugador en pie</b>.</p>
+    <p class="rules-tip">Defendé tu castillo y conquistá el de los rivales.</p>` },
+  { title: 'Tu turno', body: `<p>Tenés <b>45 segundos</b> por turno (el contador está arriba). Si se acaba, el turno se cierra solo.</p>
+    <ul><li>Cada ficha puede <b>moverse una vez</b> y <b>atacar una vez</b> por turno.</li>
+    <li>Podés <b>producir</b> tropas, <b>construir granjas</b> y <b>mejorar</b> castillos.</li>
+    <li>Al terminar, pulsá el botón de terminar turno.</li></ul>` },
+  { title: 'Economía', body: `<p>Empezás con <b>30 de oro</b>.</p>
+    <ul><li>Cada ronda tu castillo da <b>+3 / +4 / +5</b> de oro según su nivel (1 / 2 / 3).</li>
+    <li>Cada <b>granja</b> da <b>+4</b> por ronda. Cuesta 20 y solo se construye en tu territorio.</li>
+    <li><b>Mejorar</b> el castillo: nivel 2 cuesta 15, nivel 3 cuesta 50. Sube el oro, las granjas y las tropas máximas; el nivel 3 además reduce 1 el daño que recibe.</li></ul>` },
+  { title: 'Tropas', body: `<p>Selecciona tu castillo para comprar fichas:</p>
+    <div class="rules-grid"><span>Peón</span><b>8</b><span>Caballo</span><b>25</b><span>Alfil</span><b>50</b><span>Torre</span><b>85</b><span>Reina</span><b>125</b></div>
+    <ul><li>Un castillo sostiene hasta <b>2 / 3 / 4</b> tropas según su nivel.</li>
+    <li>Sobre su casilla caben <b>solo 2</b>; las demás aparecen en una casilla libre alrededor.</li>
+    <li>Una ficha recién producida no actúa ese turno.</li></ul>` },
+  { title: 'Movimiento', body: `<ul><li><b>Peón:</b> 1 casilla, sin diagonales.</li>
+    <li><b>Caballo:</b> salto en L, como en el ajedrez.</li>
+    <li><b>Alfil:</b> diagonales, hasta chocar.</li>
+    <li><b>Torre:</b> líneas rectas, hasta chocar.</li>
+    <li><b>Reina:</b> rectas y diagonales.</li></ul>
+    <p class="rules-tip">Las casillas negras son huecos: bloquean el paso (los voladores los cruzan).</p>` },
+  { title: 'Combate', body: `<p>Cada ficha tiene <b>ATQ</b> y <b>vida</b>: Peón 2/4, Caballo 3/6, Alfil 3/6, Torre 4/8, Reina 5/10.</p>
+    <ul><li>El que ataca <b>golpea primero</b>: su ATQ se resta a la vida del defensor.</li>
+    <li>Si el defensor sobrevive, <b>contraataca</b>. Si muere, no hay contraataque.</li>
+    <li>Vida 0 = ficha eliminada.</li></ul>` },
+  { title: 'Conquista', body: `<ul><li>Entrar a un castillo <b>neutral</b> lo reclama.</li>
+    <li>Un castillo <b>enemigo</b> con guarnición hay que ganarlo peleando: defienden primero las tropas y el Rey al final.</li>
+    <li>Entrar a una <b>granja</b> enemiga la captura.</li>
+    <li>Tu territorio (tu color) crece por donde pasas.</li></ul>` },
+  { title: 'Cofres y criaturas', body: `<ul><li><b>Cofres del tesoro:</b> aparecen al azar en cualquier casilla libre. Termina un movimiento encima para abrirlos y ganar <b>10 a 50 de oro</b>.</li>
+    <li><b>Criaturas</b> desde la ronda 5: derrotarlas da oro. El <b>Dragón, el Fénix y el Grifo</b> no mueren: se domestican y pasan a tu bando.</li>
+    <li>Se marchan solas a las 10 rondas. Basilisco y Medusa envenenan o petrifican al contraatacar.</li></ul>` },
+  { title: 'Clima', body: `<p>Desde la ronda 3 cae una tormenta sobre <b>9 casillas</b> durante 2 turnos:</p>
+    <ul><li><b>Dañan (−1 vida):</b> eléctrica, nieve, arena, ácido y niebla.</li>
+    <li><b>Terremoto:</b> inmoviliza a quien esté dentro.</li>
+    <li><b>Lluvia:</b> cura +2 de vida.</li>
+    <li><b>Eclipse:</b> impide atacar (se puede mover).</li>
+    <li><b>Aurora:</b> +3 de oro por tropa propia dentro.</li></ul>` },
+];
+
+(function setupRules() {
+  let idx = 0;
+  const overlay = document.createElement('div');
+  overlay.id = 'rules-overlay';
+  overlay.innerHTML = `<div class="rules-card" role="dialog" aria-modal="true" aria-label="Cómo se juega">
+    <button type="button" class="rules-close" aria-label="Cerrar">✕</button>
+    <div class="rules-step"></div><h2 class="rules-title"></h2><div class="rules-body"></div>
+    <div class="rules-nav"><button type="button" class="rules-prev">‹ Anterior</button><div class="rules-dots"></div><button type="button" class="rules-next">Siguiente ›</button></div>
+  </div>`;
+  const q = (s) => overlay.querySelector(s);
+  function paint() {
+    const s = RULES_SLIDES[idx];
+    q('.rules-step').textContent = `Paso ${idx + 1} de ${RULES_SLIDES.length}`;
+    q('.rules-title').textContent = s.title;
+    q('.rules-body').innerHTML = s.body;
+    q('.rules-prev').disabled = idx === 0;
+    q('.rules-next').textContent = idx === RULES_SLIDES.length - 1 ? 'Entendido' : 'Siguiente ›';
+    q('.rules-dots').innerHTML = RULES_SLIDES.map((_, i) => `<i class="${i === idx ? 'on' : ''}"></i>`).join('');
+  }
+  function open(at = 0) { idx = at; paint(); overlay.classList.add('open'); try { SFX.play('ui_click'); } catch (e) {} }
+  function close() {
+    overlay.classList.remove('open');
+    try { localStorage.setItem('rulesSeen', '1'); } catch (e) {}
+  }
+  q('.rules-close').addEventListener('click', close);
+  q('.rules-prev').addEventListener('click', () => { if (idx > 0) { idx--; paint(); } });
+  q('.rules-next').addEventListener('click', () => { if (idx < RULES_SLIDES.length - 1) { idx++; paint(); } else close(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  window.addEventListener('keydown', (e) => {
+    if (!overlay.classList.contains('open')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowRight') q('.rules-next').click();
+    if (e.key === 'ArrowLeft') q('.rules-prev').click();
+  });
+
+  const btn = document.createElement('button');
+  btn.id = 'rules-button';
+  btn.type = 'button';
+  btn.title = '¿Cómo se juega?';
+  btn.setAttribute('aria-label', '¿Cómo se juega?');
+  btn.textContent = '?';
+  btn.addEventListener('click', () => open(0));
+
+  function mount() {
+    document.body.appendChild(btn);
+    document.body.appendChild(overlay);
+    let seen = false;
+    try { seen = localStorage.getItem('rulesSeen') === '1'; } catch (e) {}
+    if (!seen) open(0); // primera visita: se muestra sola una vez
+  }
+  if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
+})();

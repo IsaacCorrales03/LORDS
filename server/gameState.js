@@ -94,13 +94,13 @@ const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cy
 
 // Costos de producción. El reglamento dejaba "por definir" para peón/caballo/
 // alfil/torre; se fija un valor por defecto escalado por rango (fácil de
-// ajustar luego). La reina mantiene el costo definido: 150.
+// ajustar luego).
 const UNIT_COSTS = {
-  peon: 10,
-  caballo: 30,
-  alfil: 60,
-  torre: 100,
-  reina: 150,
+  peon: 8,
+  caballo: 25,
+  alfil: 50,
+  torre: 85,
+  reina: 125,
 };
 
 // Alcance de movimiento por tipo de ficha. La lógica real vive en
@@ -277,6 +277,8 @@ function createGameState(playerCount) {
     // Clima (ver weather.js)
     activeWeather: null,
     weatherIdCounter: 1,
+    chests: [], // cofres del tesoro (ver chests.js)
+    chestIdCounter: 1,
     eventQueue: [], // eventos de fondo pendientes de enviar al historial
   };
 }
@@ -369,7 +371,7 @@ function startGame(state) {
     const castleId = state.playerStartCastleIds[index];
     const castle = state.castles.find((c) => c.id === castleId);
     player.castleId = castleId;
-    player.gold = 20;
+    player.gold = 30;
     castle.owner = player.id;
     castle.hasKing = true;
 

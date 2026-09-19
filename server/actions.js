@@ -13,6 +13,7 @@ const {
   GARRISON_TROOP_LIMIT, garrisonTroopCount, castleTroopCount,
 } = require('./gameState');
 const { duel } = require('./combat');
+const { tickChestSpawn, collectChestAt } = require('./chests');
 const {
   findPlayer, findCastle, findUnit, isPlayersTurn,
   createUnit, removeUnit, killUnit, queueEvent,
@@ -262,7 +263,7 @@ function occupyCastle(state, unit, castle, playerId, fromX, fromY) {
 // unitId se mueve a (toX, toY). Maneja reclamo de territorio, captura de
 // granjas, combate (vida/ataque) al entrar en castillo/casilla enemiga, y
 // conquista.
-function moveUnit(state, playerId, unitId, toX, toY) {
+function moveUnitInner(state, playerId, unitId, toX, toY) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
@@ -470,6 +471,13 @@ function findFreeTileAround(state, castle) {
   return options[0] || null;
 }
 
+// Mueve la ficha y, si termina sobre un cofre, lo abre.
+function moveUnit(state, playerId, unitId, toX, toY) {
+  const log = moveUnitInner(state, playerId, unitId, toX, toY);
+  collectChestAt(state, unitId);
+  return log;
+}
+
 // --- Producción de fichas ---
 function produceUnit(state, playerId, castleId, unitType) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
@@ -504,6 +512,7 @@ function produceUnit(state, playerId, castleId, unitType) {
   });
   state.units.push(newUnit);
   if (!spawn) castle.garrison.push({ unitId: newUnit.id });
+  else collectChestAt(state, newUnit.id);
   return newUnit;
 }
 
@@ -644,10 +653,11 @@ function beginTurn(state, wrapped) {
   const weather = tickWeather(state);
   const despawnedCreatures = tickCreatureDespawn(state);
   const spawnedCreature = tickCreatureSpawn(state);
+  const spawnedChest = tickChestSpawn(state);
 
   checkVictory(state);
 
-  return { spawnedCreature, despawnedCreatures, weather, statusEvents };
+  return { spawnedCreature, despawnedCreatures, spawnedChest, weather, statusEvents };
 }
 
 // --- Fin de turno ---

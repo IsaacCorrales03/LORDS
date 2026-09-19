@@ -57,6 +57,7 @@ function serializeState(s) {
     winner: s.winner,
     activeCreatures: getActiveCreatures(s),
     activeWeather: s.activeWeather,
+    chests: s.chests || [],
     turnCounter: s.turnCounter,
     turnDeadline: s.turnDeadline || null,
     serverNow: Date.now(),
@@ -128,6 +129,9 @@ function emitTurnResult(result) {
   (result.despawnedCreatures || []).forEach((c) => {
     io.emit('action:log', { type: 'creatureDespawned', event: 'creatureDespawned', creature: c, to: { x: c.x, y: c.y } });
   });
+  if (result.spawnedChest) {
+    io.emit('action:log', { type: 'chestSpawned', event: 'chestSpawned', to: { x: result.spawnedChest.x, y: result.spawnedChest.y } });
+  }
   if (result.spawnedCreature) {
     io.emit('action:log', {
       type: 'creatureSpawned',

@@ -34,6 +34,8 @@ const SFX = (() => {
     upgrade_castle: ['upgrade_castle.mp3', 0.8],
     heal: ['heal.mp3', 0.5],
     coins: ['coins.mp3', 0.7],
+    chest_spawn: ['chest_spawn.mp3', 0.6],
+    chest_open: ['chest_open.mp3', 0.8],
     // Conquista
     castle_claim: ['castle_claim.mp3', 0.7],
     castle_captured: ['castle_captured.mp3', 0.8],
@@ -217,6 +219,8 @@ const SFX = (() => {
       case 'fieldCombatAttackerWins': { const t = strike(log); later('unit_death', t + 350); return; }
 
       // Criaturas
+      case 'chestSpawned': play('chest_spawn'); return;
+      case 'chestCollected': play('chest_open'); later('coins', 300); return;
       case 'creatureDespawned': play('weather_end'); return;
       case 'weatherHeal': play('heal'); return;
       case 'weatherGold': play('coins'); return;

@@ -530,6 +530,7 @@ button:disabled {
 .tile.neutral { fill: var(--neutral-tile); }
 .tile.territory { fill: var(--territory-tile); }
 .tile.farm { fill: #253526; }
+.tile.barrier { fill: #3a3128; }
 
 .tile.checker { fill-opacity: 0.94; }
 
@@ -637,6 +638,12 @@ button:disabled {
 }
 
 .farm-badge {
+  fill: #0c1119;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.barrier-badge {
   fill: #0c1119;
   stroke-width: 2;
   pointer-events: none;
@@ -924,6 +931,17 @@ button:disabled {
   color: var(--ink-dim);
   margin: 0 0 22px;
   font-size: 14px;
+}
+
+.gameover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.gameover-actions .btn-primary,
+.gameover-actions .ghost-btn {
+  width: 100%;
 }
 
 

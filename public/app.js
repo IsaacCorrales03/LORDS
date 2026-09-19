@@ -58,6 +58,9 @@ function playerNameOf(id) {
 const UNIT_COSTS = { peon: 8, caballo: 25, alfil: 50, torre: 85, reina: 125 };
 const CASTLE_UPGRADE_COST = { 2: 15, 3: 50 };
 const FARM_COST = 20;
+const BARRIER_COST = 20;
+const BARRIER_HP_BY_LEVEL = { 1: 4, 2: 8, 3: 12 };
+const BARRIER_COUNTER_DAMAGE_BY_LEVEL = { 1: 0, 2: 2, 3: 3 };
 const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'pink'];
 const PLAYER_COLOR_HEX = {
   red: '#c1483a', blue: '#3f74b8', green: '#4c9160',
@@ -148,16 +151,22 @@ function hpBar(cx, y, w, hp, maxHp) {
   return g;
 }          // eventos de log a animar en el próximo render del tablero
 
-// Colocación de granjas: al pedirla se resaltan las casillas de territorio
-// propio disponibles y se espera el clic en una de ellas.
+// Colocación de granjas y barreras: al pedirla se resaltan las casillas de
+// territorio propio disponibles y se espera el clic en una de ellas.
 let placingFarm = false;
 let buildableFarmTiles = [];
 let pendingFarmCastleId = null;
+let placingBarrier = false;
+let buildableBarrierTiles = [];
+let pendingBarrierCastleId = null;
 
 function cancelFarmPlacement() {
   placingFarm = false;
   buildableFarmTiles = [];
   pendingFarmCastleId = null;
+  placingBarrier = false;
+  buildableBarrierTiles = [];
+  pendingBarrierCastleId = null;
 }
 
 // --- Elementos: lobby ---
@@ -183,10 +192,12 @@ const selectionBox = document.getElementById('selectionBox');
 const castleActions = document.getElementById('castleActions');
 const produceGrid = document.getElementById('produceGrid');
 const btnBuildFarm = document.getElementById('btnBuildFarm');
+const btnBuildBarrier = document.getElementById('btnBuildBarrier');
 const btnUpgrade = document.getElementById('btnUpgrade');
 const btnEndTurn = document.getElementById('btnEndTurn');
 const toast = document.getElementById('toast');
 const gameoverOverlay = document.getElementById('gameover-overlay');
+const btnPlayAgain = document.getElementById('btnPlayAgain');
 const turnBanner = document.getElementById('turnBanner');
 const turnBannerDot = document.getElementById('turnBannerDot');
 const turnBannerText = document.getElementById('turnBannerText');
@@ -293,6 +304,15 @@ socket.on('action:buildableFarmTiles', ({ tiles }) => {
   renderSelection();
 });
 
+socket.on('action:buildableBarrierTiles', ({ tiles }) => {
+  if (!pendingBarrierCastleId) return;
+  buildableBarrierTiles = tiles;
+  placingBarrier = true;
+  showToast('Elegí una casilla de tu territorio para la barrera');
+  renderBoard(currentState);
+  renderSelection();
+});
+
 socket.on('game:over', ({ winner, endedByLeader }) => {
   const title = document.getElementById('gameoverTitle');
   const subtitle = document.getElementById('gameoverSubtitle');
@@ -313,6 +333,12 @@ socket.on('game:over', ({ winner, endedByLeader }) => {
   SFX.stopMusic();
   if (!endedByLeader) SFX.play(winner === myId ? 'victory' : 'defeat');
   gameoverOverlay.classList.add('active');
+});
+
+btnPlayAgain.addEventListener('click', () => {
+  SFX.play('ui_click');
+  gameoverOverlay.classList.remove('active');
+  socket.emit('game:restart');
 });
 
 // ================= SALA DE ESPERA =================
@@ -610,6 +636,7 @@ function renderBoard(state) {
 
   const reachableSet = new Set(reachableTiles.map((t) => `${t.x},${t.y}`));
   const buildableFarmSet = new Set(buildableFarmTiles.map((t) => `${t.x},${t.y}`));
+  const buildableBarrierSet = new Set(buildableBarrierTiles.map((t) => `${t.x},${t.y}`));
   const newTileSig = new Map();
   const claimedCells = [];
 
@@ -625,7 +652,7 @@ function renderBoard(state) {
       const sig = `${tile.type}:${tile.owner || ''}`;
       newTileSig.set(key, sig);
       if (prevTileSig && prevTileSig.has(key) && prevTileSig.get(key) !== sig
-        && (tile.type === 'territory' || tile.type === 'farm' || tile.type === 'castle')) {
+        && (tile.type === 'territory' || tile.type === 'farm' || tile.type === 'barrier' || tile.type === 'castle')) {
         claimedCells.push({ x, y });
       }
 
@@ -636,15 +663,15 @@ function renderBoard(state) {
       rect.setAttribute('height', TILE_SIZE);
 
       const checker = (x + y) % 2 === 0 ? ' checker' : '';
-      let cls = 'tile' + checker + ' ' + (tile.type === 'farm' ? 'farm' : (tile.type === 'territory' ? 'territory' : 'neutral'));
+      let cls = 'tile' + checker + ' ' + (tile.type === 'farm' ? 'farm' : (tile.type === 'barrier' ? 'barrier' : (tile.type === 'territory' ? 'territory' : 'neutral')));
       const isReachable = reachableSet.has(key);
       if (isReachable) cls += ' reachable';
       rect.setAttribute('class', cls);
 
       const ownerPlayer = tile.owner ? state.players.find((p) => p.id === tile.owner) : null;
-      if (ownerPlayer && (tile.type === 'territory' || tile.type === 'farm')) {
+      if (ownerPlayer && (tile.type === 'territory' || tile.type === 'farm' || tile.type === 'barrier')) {
         // Inline style, no atributo: así le gana a las reglas .tile.* del CSS.
-        rect.style.fill = tile.type === 'farm' ? shade(PLAYER_COLOR_HEX[ownerPlayer.color], 0.2) : PLAYER_COLOR_HEX[ownerPlayer.color];
+        rect.style.fill = (tile.type === 'farm' || tile.type === 'barrier') ? shade(PLAYER_COLOR_HEX[ownerPlayer.color], tile.type === 'barrier' ? 0.35 : 0.2) : PLAYER_COLOR_HEX[ownerPlayer.color];
       }
       if (isReachable) {
         rect.addEventListener('click', () => {
@@ -653,11 +680,15 @@ function renderBoard(state) {
         });
       }
 
-      const buildableSet = placingFarm ? buildableFarmSet : null;
+      const buildableSet = placingFarm ? buildableFarmSet : (placingBarrier ? buildableBarrierSet : null);
       if (buildableSet && buildableSet.has(key)) {
         rect.classList.add('buildable');
         rect.addEventListener('click', () => {
-          socket.emit('action:buildFarm', { castleId: pendingFarmCastleId, x, y });
+          if (placingFarm) {
+            socket.emit('action:buildFarm', { castleId: pendingFarmCastleId, x, y });
+          } else {
+            socket.emit('action:buildBarrier', { castleId: pendingBarrierCastleId, x, y });
+          }
           cancelFarmPlacement();
         });
       }
@@ -734,6 +765,34 @@ function renderBoard(state) {
           '<rect x="9.3" y="13.6" width="5.4" height="6.4" fill="var(--panel-2)"/>';
 
         boardSvg.appendChild(farmIcon);
+      }
+      if (tile.type === 'barrier') {
+        const barrier = barrierAt(state, x, y);
+        const bcx = x * TILE_SIZE + TILE_SIZE / 2;
+        const bcy = y * TILE_SIZE + TILE_SIZE / 2;
+
+        const barrierIcon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        barrierIcon.setAttribute('class', 'barrier-badge');
+        barrierIcon.setAttribute('fill', '#0c1119');
+        barrierIcon.setAttribute('transform', `translate(${bcx - 10}, ${bcy - 10}) scale(0.83)`);
+        barrierIcon.innerHTML =
+          '<rect x="3" y="5" width="4" height="15" fill="currentColor"/>' +
+          '<rect x="10" y="4" width="4" height="16" fill="currentColor"/>' +
+          '<rect x="17" y="5" width="4" height="15" fill="currentColor"/>' +
+          '<rect x="2" y="10" width="20" height="3" fill="var(--panel-2)"/>';
+        boardSvg.appendChild(barrierIcon);
+
+        if (barrier) {
+          boardSvg.appendChild(hpBar(bcx, bcy + TILE_SIZE / 2 - 5, 24, barrier.hp, barrier.maxHp));
+
+          const selUnitForBarrierAttack = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
+          const barrierAttackable = canAttackBarrierWith(selUnitForBarrierAttack, barrier, state);
+          const bHit = svgEl('circle', { cx: bcx, cy: bcy, r: TILE_SIZE / 2 - 2 }, 'unit-hit' + (barrierAttackable ? ' attackable-enemy' : ''));
+          bHit.addEventListener('click', () => {
+            if (barrierAttackable) attackBarrierWith(selUnitForBarrierAttack.id, barrier.id);
+          });
+          boardSvg.appendChild(bHit);
+        }
       }
     }
   }
@@ -817,7 +876,7 @@ function renderBoard(state) {
     'attackerWinsCastle', 'defenderWinsCastle', 'fieldCombatAttackerWins', 'fieldCombatDefenderWins',
     'fieldCombatStandoff', 'castleStandoff', 'castleDefenderKilled', 'weatherKill',
     'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'creatureDefeated', 'creatureTamed',
-    'attackUnitKilled', 'attackUnitHit',
+    'attackUnitKilled', 'attackUnitHit', 'barrierDamaged', 'barrierDestroyed', 'attackerLostToBarrier',
   ]);
   pendingFx.forEach((log) => {
     if (log.to && combatEvents.has(log.event)) spawnTileFx(log.to.x, log.to.y, 'combat-fx');
@@ -826,7 +885,7 @@ function renderBoard(state) {
     if (log.to && log.dealt) spawnFloat(log.to.x, log.to.y, `-${log.dealt}`, 'float-dmg');
     if (log.counter) {
       let at = log.from;
-      if (log.type === 'attackCreature') {
+      if (log.type === 'attackCreature' || log.type === 'attackBarrier') {
         const u = state.units.find((uu) => uu.id === log.unitId);
         at = u ? { x: u.x, y: u.y } : null;
       }
@@ -1055,6 +1114,25 @@ function attackUnitWith(unitId, targetId) {
   socket.emit('action:attackUnit', { unitId, targetId });
 }
 
+function barrierAt(state, x, y) {
+  return (state.barriers || []).find((b) => b.x === x && b.y === y) || null;
+}
+
+// Ataque a una barrera rival adyacente, igual patrón que atacar una criatura.
+function canAttackBarrierWith(unit, barrier, state) {
+  if (!unit || !barrier) return false;
+  const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
+  if (!isMyTurn || unit.owner !== myId || barrier.owner === myId) return false;
+  if (unit.type === 'rey' || unit.attackedThisTurn) return false;
+  const dx = Math.abs(unit.x - barrier.x);
+  const dy = Math.abs(unit.y - barrier.y);
+  return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+}
+
+function attackBarrierWith(unitId, barrierId) {
+  socket.emit('action:attackBarrier', { unitId, barrierId });
+}
+
 // Click en una ficha ajena (rival o neutral): si tengo una ficha propia
 // seleccionada y adyacente, ataca; si no, solo muestra su información.
 function handleUnitClick(unitId) {
@@ -1197,6 +1275,7 @@ function renderSelection() {
         <span class="chip" title="Tropas producidas / máximo del nivel"><b>${castleTroopStats(castle).produced}</b>/${info.militaryCapacity} tropas</span>
         <span class="chip" title="Tropas sobre la casilla del castillo"><b>${castleTroopStats(castle).inside}</b>/${GARRISON_TROOP_LIMIT} dentro</span>
         <span class="chip"><b>${castle.farms}</b>/${info.maxFarms} granjas</span>
+        <span class="chip" title="Barreras construidas por este castillo"><b>${currentState.barriers ? currentState.barriers.filter((b) => b.castleId === castle.id).length : 0}</b> barreras</span>
       </div>`;
   } else selectionBox.innerHTML = `
     <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
@@ -1214,10 +1293,14 @@ function renderSelection() {
       ${FLYING_TYPES.has(unit.type) ? '<br>Vuela sobre los abismos' : ''}
     </div>
     ${creaturesOf(currentState).filter((c) => canAttackCreatureWith(unit, currentState, c)).map((c) => `<button class="action-btn attack-btn" data-creature="${c.id}" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[c.type] || c.type}</span><span class="cost">-${unit.atk} vida</span></button>`).join('')}
+    ${(currentState.barriers || []).filter((b) => canAttackBarrierWith(unit, b, currentState)).map((b) => `<button class="action-btn attack-btn" data-barrier="${b.id}" style="margin-top:8px; width:100%;"><span>Atacar barrera (Nv ${b.level})</span><span class="cost">-${unit.atk} vida</span></button>`).join('')}
     ${unit.attackedThisTurn && creaturesOf(currentState).length > 0 && unit.type !== 'rey' ? '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>' : ''}
   `;
   selectionBox.querySelectorAll('[data-creature]').forEach((b) => {
     b.onclick = () => attackCreatureWith(unit.id, Number(b.dataset.creature));
+  });
+  selectionBox.querySelectorAll('[data-barrier]').forEach((b) => {
+    b.onclick = () => attackBarrierWith(unit.id, Number(b.dataset.barrier));
   });
 
   if (castle && isMyTurn) {
@@ -1239,6 +1322,25 @@ function renderSelection() {
         SFX.play('ui_click');
         pendingFarmCastleId = castle.id;
         socket.emit('action:getBuildableFarmTiles');
+      }
+    };
+
+    const inBarrierPlacement = placingBarrier && pendingBarrierCastleId === castle.id;
+    const barrierDisabled = !myPlayer || myPlayer.gold < BARRIER_COST;
+    btnBuildBarrier.disabled = barrierDisabled && !inBarrierPlacement;
+    const barrierLevelInfo = `Nv ${castle.level}: ${BARRIER_HP_BY_LEVEL[castle.level]} vida${BARRIER_COUNTER_DAMAGE_BY_LEVEL[castle.level] ? `, ${BARRIER_COUNTER_DAMAGE_BY_LEVEL[castle.level]} de contraataque` : ''}`;
+    btnBuildBarrier.title = barrierLevelInfo;
+    btnBuildBarrier.querySelector('span:first-child').textContent = inBarrierPlacement ? 'Cancelar selección' : 'Construir barrera';
+    btnBuildBarrier.querySelector('.cost').textContent = inBarrierPlacement ? '' : `${BARRIER_COST} oro`;
+    btnBuildBarrier.onclick = () => {
+      if (inBarrierPlacement) {
+        cancelFarmPlacement();
+        renderBoard(currentState);
+        renderSelection();
+      } else {
+        SFX.play('ui_click');
+        pendingBarrierCastleId = castle.id;
+        socket.emit('action:getBuildableBarrierTiles');
       }
     };
 
@@ -1331,7 +1433,7 @@ const COMBAT_EVENTS = new Set([
   'attackerWinsCastle', 'defenderWinsCastle', 'fieldCombatAttackerWins', 'fieldCombatDefenderWins',
   'fieldCombatStandoff', 'castleStandoff', 'castleDefenderKilled',
   'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'weatherKill',
-  'attackUnitKilled', 'attackUnitHit',
+  'attackUnitKilled', 'attackUnitHit', 'barrierDamaged', 'barrierDestroyed', 'attackerLostToBarrier',
 ]);
 const CAPTURE_EVENTS = new Set([
   'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
@@ -1401,9 +1503,13 @@ function describeLog(log) {
 
     case 'attackUnitKilled': return `${label(log.unitType)} elimina a ${label(log.targetType)}${dmgText(log)}${log.targetRevived ? ' (el Fénix resucita)' : ''}`;
     case 'attackUnitHit': return `${label(log.unitType)} golpea a ${label(log.targetType)}${dmgText(log)}; le quedan ${log.targetHpRemaining} de vida`;
+    case 'barrierDamaged': return `${label(log.unitType)} golpea una barrera (Nv ${log.barrierLevel})${dmgText(log)}; le quedan ${log.barrierHpRemaining} de vida`;
+    case 'barrierDestroyed': return `${label(log.unitType)} destruye una barrera (Nv ${log.barrierLevel})${dmgText(log)}`;
+    case 'attackerLostToBarrier': return `${label(log.unitType)} cae ante una barrera (Nv ${log.barrierLevel})${log.attackerRevived ? ' (el Fénix resucita)' : ''}${dmgText(log)}`;
     default:
       if (log.type === 'produce') return `Ficha producida: ${label(log.unitType)}`;
       if (log.type === 'buildFarm') return `Granja construida`;
+      if (log.type === 'buildBarrier') return `Barrera construida`;
       if (log.type === 'upgradeCastle') return `Castillo mejorado a nivel ${log.newLevel}`;
       return from && to ? `Movimiento ${from} → ${to}` : 'Acción';
   }
@@ -1435,6 +1541,7 @@ const RULES_SLIDES = [
   { title: 'Economía', body: `<p>Empezás con <b>30 de oro</b>.</p>
     <ul><li>Cada ronda tu castillo da <b>+3 / +4 / +5</b> de oro según su nivel (1 / 2 / 3).</li>
     <li>Cada <b>granja</b> da <b>+4</b> por ronda. Cuesta 20 y solo se construye en tu territorio.</li>
+    <li>Una <b>barrera</b> cuesta 20 (igual que una granja) y bloquea el paso: hay que destruirla para avanzar. Tiene <b>4 / 8 / 12</b> de vida según el nivel del castillo, se regenera por completo cada turno, y desde el nivel 2 contraataca (<b>2</b> o <b>3</b> de daño).</li>
     <li><b>Mejorar</b> el castillo: nivel 2 cuesta 15, nivel 3 cuesta 50. Sube el oro, las granjas y las tropas máximas; el nivel 3 además reduce 1 el daño que recibe.</li></ul>` },
   { title: 'Tropas', body: `<p>Selecciona tu castillo para comprar fichas:</p>
     <div class="rules-grid"><span>Peón</span><b>8</b><span>Caballo</span><b>25</b><span>Alfil</span><b>50</b><span>Torre</span><b>85</b><span>Reina</span><b>125</b></div>

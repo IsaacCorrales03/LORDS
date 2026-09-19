@@ -232,6 +232,10 @@ const SFX = (() => {
       case 'creatureDefeated': { const t = strike(log); later('creature_death', t + 350); later('coins', t + 800); return; }
       case 'creatureTamed': { const t = strike(log); later('creature_tamed', t + 400); return; }
 
+      case 'barrierDamaged': strike(log); return;
+      case 'barrierDestroyed': strike(log); return;
+      case 'attackerLostToBarrier': { const t = strike(log); later('unit_death', t + 400); return; }
+
       // Clima
       case 'weatherSpawned': {
         // Los climas nuevos reutilizan sonidos existentes hasta tener los suyos.
@@ -258,6 +262,7 @@ const SFX = (() => {
     // Acciones sin "event": producir, granja, mejora
     if (log.type === 'produce') play('produce');
     else if (log.type === 'buildFarm') play('build_farm');
+    else if (log.type === 'buildBarrier') play('build_farm');
     else if (log.type === 'upgradeCastle') play('upgrade_castle');
   }
 

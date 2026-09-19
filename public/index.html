@@ -117,6 +117,7 @@
         <div class="produce-grid" id="produceGrid"></div>
         <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
           <button class="action-btn" id="btnBuildFarm"><span>Construir granja</span><span class="cost"></span></button>
+          <button class="action-btn" id="btnBuildBarrier"><span>Construir barrera</span><span class="cost"></span></button>
           <button class="action-btn" id="btnUpgrade"><span>Mejorar castillo</span><span class="cost"></span></button>
         </div>
       </div>
@@ -140,7 +141,10 @@
       </svg>
       <h2 id="gameoverTitle">Fin de la partida</h2>
       <p id="gameoverSubtitle"></p>
-      <button class="btn-primary" onclick="location.reload()">Volver al lobby</button>
+      <div class="gameover-actions">
+        <button class="btn-primary" id="btnPlayAgain">Jugar de nuevo</button>
+        <button class="ghost-btn" onclick="location.reload()">Volver al lobby</button>
+      </div>
     </div>
   </div>
 

@@ -108,8 +108,8 @@ let inspectedUnitId = null; // ficha rival/propia ajena vista en el panel, sin s
 let inspectedCreatureId = null; // id de la criatura que se ve en el panel (null = ninguna)
 const CASTLE_LEVEL_INFO = {
   1: { goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2 },
-  2: { goldPerTurn: 4, militaryCapacity: 2, maxFarms: 3 },
-  3: { goldPerTurn: 5, militaryCapacity: 2, maxFarms: 4 },
+  2: { goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3 },
+  3: { goldPerTurn: 5, militaryCapacity: 4, maxFarms: 4 },
 };
 let reachableTiles = [];
 let nameEditTimer = null;
@@ -1108,6 +1108,14 @@ function selectCastle(castleId) {
   renderSelection();
 }
 
+const GARRISON_TROOP_LIMIT = 2; // tropas que caben sobre la casilla del castillo
+function castleTroopStats(castle) {
+  const units = currentState.units;
+  const produced = units.filter((u) => u.type !== 'rey' && u.owner === castle.owner && u.originCastleId === castle.id).length;
+  const inside = castle.garrison.filter((g) => { const u = units.find((x) => x.id === g.unitId); return u && u.type !== 'rey'; }).length;
+  return { produced, inside };
+}
+
 function renderSelection() {
   if (!currentState) return;
   const unit = selectedUnitId ? currentState.units.find((u) => u.id === selectedUnitId) : null;
@@ -1168,13 +1176,14 @@ function renderSelection() {
     const info = CASTLE_LEVEL_INFO[castle.level];
     selectionBox.innerHTML = `
       <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
-        <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup('torre')}</svg>
+        <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${CASTLE_ICON}</svg>
         <span>Castillo #${castle.id}${castle.hasKing ? ' (Rey)' : ''}</span>
       </div>
       <div class="stat-chips">
         <span class="chip"><b>Nv ${castle.level}</b></span>
         <span class="chip"><b>+${info.goldPerTurn}</b> oro/ronda</span>
-        <span class="chip"><b>${castle.garrison.length}</b>/${info.militaryCapacity} tropas</span>
+        <span class="chip" title="Tropas producidas / máximo del nivel"><b>${castleTroopStats(castle).produced}</b>/${info.militaryCapacity} tropas</span>
+        <span class="chip" title="Tropas sobre la casilla del castillo"><b>${castleTroopStats(castle).inside}</b>/${GARRISON_TROOP_LIMIT} dentro</span>
         <span class="chip"><b>${castle.farms}</b>/${info.maxFarms} granjas</span>
       </div>`;
   } else selectionBox.innerHTML = `
@@ -1242,9 +1251,9 @@ function renderProduceGrid(castle, myPlayer) {
     const btn = document.createElement('button');
     btn.className = 'action-btn';
     btn.innerHTML = `<span style="display:flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" fill="var(--gold)" color="var(--gold)">${unitIconMarkup(type)}</svg>${UNIT_LABELS[type]}</span><span class="cost">${cost}</span>`;
-    const full = castle.garrison.length >= CASTLE_LEVEL_INFO[castle.level].militaryCapacity;
+    const full = castleTroopStats(castle).produced >= CASTLE_LEVEL_INFO[castle.level].militaryCapacity;
     btn.disabled = !myPlayer || myPlayer.gold < cost || full;
-    if (full) btn.title = 'Capacidad militar llena';
+    if (full) btn.title = 'Máximo de tropas del nivel alcanzado: mejora el castillo';
     btn.addEventListener('click', () => {
       socket.emit('action:produce', { castleId: castle.id, unitType: type });
     });

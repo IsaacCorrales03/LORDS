@@ -31,14 +31,14 @@ const CREATURE_DESPAWN_ROUNDS = 10; // rondas que dura una criatura sin morir
 //   - Medusa: petrifica a la ficha atacante (no puede moverse ni atacar
 //     durante sus próximos turnos).
 const CREATURE_STATS = {
-  lobo:      { atk: 4, hp: 8,  goldReward: 20, weight: 25 },
-  golem:     { atk: 3, hp: 12, goldReward: 30, weight: 20 },
-  dragon:    { atk: 5, hp: 15, goldReward: 20, weight: 5, tameable: true },
-  grifo:     { atk: 4, hp: 13, goldReward: 20,  weight: 10, tameable: true },
-  basilisco: { atk: 5, hp: 14, goldReward: 45, weight: 10,  poison: { damage: 2, turns: 3 } },
-  medusa:    { atk: 4, hp: 16, goldReward: 40, weight: 10,  petrify: { turns: 3 } },
-  hidra:     { atk: 7, hp: 24, goldReward: 60, weight: 10,  regen: 2 },
-  fenix:     { atk: 4, hp: 10, goldReward: 20,  weight: 10,  tameable: true },
+  lobo:      { atk: 4, hp: 8,  goldReward: 10, weight: 35 },
+  golem:     { atk: 3, hp: 12, goldReward: 14, weight: 25 },
+  dragon:    { atk: 5, hp: 15, goldReward: 30, weight: 10, tameable: true },
+  grifo:     { atk: 4, hp: 13, goldReward: 0,  weight: 10, tameable: true },
+  basilisco: { atk: 5, hp: 14, goldReward: 25, weight: 6,  poison: { damage: 2, turns: 3 } },
+  medusa:    { atk: 4, hp: 16, goldReward: 35, weight: 5,  petrify: { turns: 2 } },
+  hidra:     { atk: 7, hp: 24, goldReward: 60, weight: 5,  regen: 2 },
+  fenix:     { atk: 4, hp: 10, goldReward: 0,  weight: 4,  tameable: true },
 };
 
 function pickCreatureType() {

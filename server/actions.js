@@ -10,6 +10,7 @@ const {
   FARM_INCOME,
   FLYING_UNITS,
   getActiveCreatures,
+  GARRISON_TROOP_LIMIT, garrisonTroopCount, castleTroopCount,
 } = require('./gameState');
 const { duel } = require('./combat');
 const {
@@ -327,8 +328,8 @@ function moveUnit(state, playerId, unitId, toX, toY) {
     log = { ...log, event: 'neutralCastleCaptured', castleId: destCastle.id };
   } else if (destCastle && destCastle.owner === playerId) {
     const levelInfo = CASTLE_LEVELS[destCastle.level];
-    if (destCastle.garrison.length >= levelInfo.militaryCapacity) {
-      throw new Error('El castillo no tiene capacidad militar disponible');
+    if (garrisonTroopCount(state, destCastle) >= GARRISON_TROOP_LIMIT) {
+      throw new Error(`Solo caben ${GARRISON_TROOP_LIMIT} tropas sobre el castillo`);
     }
     unit.x = toX;
     unit.y = toY;
@@ -446,6 +447,29 @@ function attackUnit(state, playerId, unitId, targetId) {
   return log;
 }
 
+// Casilla libre más cercana alrededor del castillo (radio 1, luego 2): accesible,
+// sin castillo, sin fichas ni criaturas. Prefiere territorio propio.
+function findFreeTileAround(state, castle) {
+  const creatures = getActiveCreatures(state);
+  const options = [];
+  for (let r = 1; r <= 2 && options.length === 0; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = castle.x + dx, y = castle.y + dy;
+        if (x < 0 || y < 0 || x >= state.boardSize || y >= state.boardSize) continue;
+        const t = state.tiles[y][x];
+        if (!t || t.type === 'castle' || t.type === 'inaccessible') continue;
+        if (state.units.some((u) => u.x === x && u.y === y)) continue;
+        if (creatures.some((c) => c.x === x && c.y === y)) continue;
+        options.push({ x, y, own: t.owner === castle.owner ? 0 : 1 });
+      }
+    }
+  }
+  options.sort((a, b) => a.own - b.own);
+  return options[0] || null;
+}
+
 // --- Producción de fichas ---
 function produceUnit(state, playerId, castleId, unitType) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
@@ -458,19 +482,28 @@ function produceUnit(state, playerId, castleId, unitType) {
   if (player.gold < cost) throw new Error('Oro insuficiente');
 
   const levelInfo = CASTLE_LEVELS[castle.level];
-  if (castle.garrison.length >= levelInfo.militaryCapacity) {
-    throw new Error('Capacidad militar del castillo llena');
+  if (castleTroopCount(state, castle) >= levelInfo.militaryCapacity) {
+    throw new Error(`Este castillo ya sostiene el máximo de tropas (${levelInfo.militaryCapacity}). Mejóralo para producir más`);
+  }
+
+  // Sobre la casilla del castillo caben solo GARRISON_TROOP_LIMIT tropas; las
+  // demás aparecen en la casilla libre más cercana alrededor.
+  let spawn = null;
+  if (garrisonTroopCount(state, castle) >= GARRISON_TROOP_LIMIT) {
+    spawn = findFreeTileAround(state, castle);
+    if (!spawn) throw new Error('No hay casilla libre junto al castillo para la nueva tropa');
   }
 
   player.gold -= cost;
   // No puede moverse ni atacar el mismo turno en que se produce.
-  const newUnit = createUnit(state, unitType, playerId, castle.x, castle.y, {
-    castleId: castle.id,
+  const newUnit = createUnit(state, unitType, playerId, spawn ? spawn.x : castle.x, spawn ? spawn.y : castle.y, {
+    castleId: spawn ? null : castle.id,
+    originCastleId: castle.id,
     movedThisTurn: true,
     attackedThisTurn: true,
   });
   state.units.push(newUnit);
-  castle.garrison.push({ unitId: newUnit.id });
+  if (!spawn) castle.garrison.push({ unitId: newUnit.id });
   return newUnit;
 }
 

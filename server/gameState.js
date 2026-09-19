@@ -66,12 +66,29 @@ const RANKS = {
   grifo: 8, // criatura domada al derrotar al Grifo; no se produce en castillo
 };
 
-// Capacidad militar fija en 2 para todos los niveles (mejorar ya no la aumenta).
+// militaryCapacity = cuántas tropas puede PRODUCIR/sostener el castillo (2/3/4
+// según nivel). Sobre su casilla solo pueden estar GARRISON_TROOP_LIMIT a la
+// vez; las demás salen a una casilla adyacente.
 const CASTLE_LEVELS = {
   1: { upgradeCost: 0, goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2, defenseBonus: 0 },
-  2: { upgradeCost: 15, goldPerTurn: 4, militaryCapacity: 2, maxFarms: 3, defenseBonus: 0 },
-  3: { upgradeCost: 50, goldPerTurn: 5, militaryCapacity: 2, maxFarms: 4, defenseBonus: 1 },
+  2: { upgradeCost: 15, goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3, defenseBonus: 0 },
+  3: { upgradeCost: 50, goldPerTurn: 5, militaryCapacity: 4, maxFarms: 4, defenseBonus: 1 },
 };
+
+const GARRISON_TROOP_LIMIT = 2; // tropas (sin contar al Rey) que caben sobre la casilla del castillo
+
+// Tropas (no Rey) que hay ahora mismo dentro de la casilla del castillo.
+function garrisonTroopCount(state, castle) {
+  return castle.garrison.filter((g) => {
+    const u = state.units.find((x) => x.id === g.unitId);
+    return u && u.type !== 'rey';
+  }).length;
+}
+
+// Tropas vivas producidas por este castillo (estén donde estén).
+function castleTroopCount(state, castle) {
+  return state.units.filter((u) => u.type !== 'rey' && u.owner === castle.owner && u.originCastleId === castle.id).length;
+}
 
 const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'pink'];
 
@@ -352,7 +369,7 @@ function startGame(state) {
     const castleId = state.playerStartCastleIds[index];
     const castle = state.castles.find((c) => c.id === castleId);
     player.castleId = castleId;
-    player.gold = 30;
+    player.gold = 20;
     castle.owner = player.id;
     castle.hasKing = true;
 
@@ -387,6 +404,9 @@ module.exports = {
   getActiveCreatures,
   RANKS,
   CASTLE_LEVELS,
+  GARRISON_TROOP_LIMIT,
+  garrisonTroopCount,
+  castleTroopCount,
   PLAYER_COLORS,
   UNIT_COSTS,
   MOVEMENT_RANGE,

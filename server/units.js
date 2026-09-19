@@ -3,7 +3,7 @@
 // habilidad de resurrección del Fénix) y cola de eventos para el historial.
 
 const { statsFor } = require('./combat');
-const { CASTLE_LEVELS } = require('./gameState');
+const { GARRISON_TROOP_LIMIT, garrisonTroopCount } = require('./gameState');
 
 const PHOENIX_REVIVE_COST = 10;
 
@@ -120,8 +120,7 @@ function tryPhoenixRevive(state, unit) {
   const candidates = state.castles.filter((c) => {
     if (c.owner === null) return !state.units.some((u) => u.id !== unit.id && u.x === c.x && u.y === c.y);
     if (c.owner !== player.id) return false;
-    const inside = c.garrison.filter((g) => g.unitId !== unit.id).length;
-    return inside < (CASTLE_LEVELS[c.level] || CASTLE_LEVELS[1]).militaryCapacity;
+    return garrisonTroopCount(state, c) - (c.garrison.some((g) => g.unitId === unit.id) ? 1 : 0) < GARRISON_TROOP_LIMIT;
   });
   candidates.sort((a, b) => dist(a) - dist(b));
   const castle = candidates[0] || null;

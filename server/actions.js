@@ -18,9 +18,9 @@ const {
   isPetrified, tickUnitStatuses,
 } = require('./units');
 const {
-  tickCreatureSpawn, tickCreatureRegen, attackCreature: attackCreatureInternal,
+  tickCreatureSpawn, tickCreatureRegen, tickCreatureDespawn, attackCreature: attackCreatureInternal,
 } = require('./creatures');
-const { tickWeather, isUnitImmobilized } = require('./weather');
+const { tickWeather, isUnitImmobilized, isUnitDisarmed } = require('./weather');
 
 function tileAt(state, x, y) {
   if (y < 0 || y >= state.boardSize || x < 0 || x >= state.boardSize) return null;
@@ -279,6 +279,10 @@ function moveUnit(state, playerId, unitId, toX, toY) {
   const destTile = tileAt(state, toX, toY);
   if (!destTile) throw new Error('Casilla fuera del tablero');
 
+  const isHostileDest = (destTile.type === 'castle' && (() => { const c = findCastle(state, destTile.occupantCastleId); return c && c.owner && c.owner !== playerId; })())
+    || state.units.some((u) => u.x === toX && u.y === toY && u.owner !== playerId);
+  if (isHostileDest && isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
+
   let log = { type: 'move', unitId, from: { x: fromX, y: fromY }, to: { x: toX, y: toY } };
 
   const enemyUnitAtDest = state.units.find((u) => u.x === toX && u.y === toY && u.owner !== playerId);
@@ -397,6 +401,7 @@ function attackUnit(state, playerId, unitId, targetId) {
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
   if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
+  if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
   if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
 
   const target = findUnit(state, targetId);
@@ -604,11 +609,12 @@ function beginTurn(state, wrapped) {
   syncTurnOrder(state);
 
   const weather = tickWeather(state);
+  const despawnedCreatures = tickCreatureDespawn(state);
   const spawnedCreature = tickCreatureSpawn(state);
 
   checkVictory(state);
 
-  return { spawnedCreature, weather, statusEvents };
+  return { spawnedCreature, despawnedCreatures, weather, statusEvents };
 }
 
 // --- Fin de turno ---

@@ -217,6 +217,10 @@ const SFX = (() => {
       case 'fieldCombatAttackerWins': { const t = strike(log); later('unit_death', t + 350); return; }
 
       // Criaturas
+      case 'creatureDespawned': play('weather_end'); return;
+      case 'weatherHeal': play('heal'); return;
+      case 'weatherGold': play('coins'); return;
+      case 'turnTimeout': play('ui_error'); return;
       case 'creatureSpawned': play('creature_spawn_' + (log.creature && log.creature.type)); return;
       case 'creatureSurvived': strike(log); return;
       case 'attackerLostToCreature': { const t = strike(log); later('unit_death', t + 400); return; }
@@ -225,7 +229,13 @@ const SFX = (() => {
       case 'creatureTamed': { const t = strike(log); later('creature_tamed', t + 400); return; }
 
       // Clima
-      case 'weatherSpawned': play('weather_' + (log.weather && log.weather.type)); return;
+      case 'weatherSpawned': {
+        // Los climas nuevos reutilizan sonidos existentes hasta tener los suyos.
+        const alias = { lluvia: 'heal', eclipse: 'weather_niebla', aurora: 'coins' };
+        const t = log.weather && log.weather.type;
+        play(alias[t] || 'weather_' + t);
+        return;
+      }
       case 'weatherEnded': play('weather_end'); return;
       case 'weatherKill': play('weather_kill'); later('unit_death', 250); return;
 

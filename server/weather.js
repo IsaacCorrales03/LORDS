@@ -10,15 +10,19 @@
 //     mientras dure (ver isUnitImmobilized).
 
 const { isAccessibleTile } = require('./terrain');
-const { killUnit, queueEvent } = require('./units');
+const { killUnit, queueEvent, findPlayer } = require('./units');
 
 const WEATHER_START_ROUND = 3;
 const WEATHER_INTERVAL_TURNS = 3;
 const WEATHER_DURATION_TURNS = 2;
 const WEATHER_DAMAGE = 1;
 const WEATHER_CELLS = 9;
-const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'acido', 'niebla', 'terremoto'];
-const NO_DAMAGE_TYPES = new Set(['terremoto']);
+const WEATHER_HEAL = 2;      // lluvia: vida que recupera cada ficha dentro por turno
+const WEATHER_GOLD = 3;      // aurora: oro por ficha propia dentro, por turno
+const WEATHER_TYPES = ['electrica', 'nieve', 'arena', 'acido', 'niebla', 'terremoto', 'lluvia', 'eclipse', 'aurora'];
+// Sin daño: terremoto (inmoviliza), lluvia (cura), eclipse (no se puede
+// atacar), aurora (da oro).
+const NO_DAMAGE_TYPES = new Set(['terremoto', 'lluvia', 'eclipse', 'aurora']);
 
 const ORTHO = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
@@ -30,6 +34,12 @@ function isInZone(w, x, y) {
 function isUnitImmobilized(state, unit) {
   const w = state.activeWeather;
   return !!(w && w.type === 'terremoto' && isInZone(w, unit.x, unit.y));
+}
+
+// Eclipse: las fichas dentro no pueden atacar (sí moverse).
+function isUnitDisarmed(state, unit) {
+  const w = state.activeWeather;
+  return !!(w && w.type === 'eclipse' && isInZone(w, unit.x, unit.y));
 }
 
 // Elige una zona de 9 casillas accesibles conectadas entre sí: parte de una
@@ -91,6 +101,27 @@ function tickWeather(state) {
         }
       });
     }
+    if (w.type === 'lluvia') {
+      let healed = 0;
+      state.units.forEach((u) => {
+        if (u.hp < u.maxHp && isInZone(w, u.x, u.y)) {
+          u.hp = Math.min(u.maxHp, u.hp + WEATHER_HEAL);
+          healed++;
+        }
+      });
+      if (healed > 0) queueEvent(state, { type: 'weatherHeal', event: 'weatherHeal', count: healed, weatherType: w.type });
+    } else if (w.type === 'aurora') {
+      const gains = new Map();
+      state.units.forEach((u) => {
+        if (u.type !== 'rey' && isInZone(w, u.x, u.y)) gains.set(u.owner, (gains.get(u.owner) || 0) + WEATHER_GOLD);
+      });
+      gains.forEach((gold, pid) => {
+        const p = findPlayer(state, pid);
+        if (!p || !p.alive) return;
+        p.gold += gold;
+        queueEvent(state, { type: 'weatherGold', event: 'weatherGold', playerId: pid, gold, weatherType: w.type });
+      });
+    }
     w.turnsLeft -= 1;
     if (w.turnsLeft <= 0) {
       state.activeWeather = null;
@@ -116,5 +147,5 @@ function tickWeather(state) {
 
 module.exports = {
   WEATHER_START_ROUND, WEATHER_INTERVAL_TURNS, WEATHER_DURATION_TURNS,
-  WEATHER_DAMAGE, WEATHER_CELLS, WEATHER_TYPES, tickWeather, isInZone, isUnitImmobilized,
+  WEATHER_DAMAGE, WEATHER_CELLS, WEATHER_TYPES, tickWeather, isInZone, isUnitImmobilized, isUnitDisarmed,
 };

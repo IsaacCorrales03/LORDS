@@ -3,6 +3,7 @@
 // habilidad de resurrección del Fénix) y cola de eventos para el historial.
 
 const { statsFor } = require('./combat');
+const { CASTLE_LEVELS } = require('./gameState');
 
 const PHOENIX_REVIVE_COST = 10;
 
@@ -106,34 +107,38 @@ function removeUnit(state, unitId) {
   state.units = state.units.filter((u) => u.id !== unitId);
 }
 
-// Fénix: al morir puede resucitar UNA vez por jugador pagando 10 monedas, en
-// un castillo neutral (que pasa a ser suyo). Si no hay castillo neutral libre,
-// no tiene oro o ya usó su resurrección, la ficha se pierde.
+// Fénix: al morir puede resucitar UNA vez por jugador pagando 10 monedas.
+// Reaparece en el castillo más cercano que sea suyo (con cupo) o neutral
+// (que pasa a ser suyo). Si no hay ninguno disponible, renace en el lugar
+// donde cayó: ya no depende de que exista un castillo neutral libre.
 function tryPhoenixRevive(state, unit) {
   const player = findPlayer(state, unit.owner);
   if (!player || player.phoenixRevived) return { ok: false, reason: 'yaUsada' };
   if (player.gold < PHOENIX_REVIVE_COST) return { ok: false, reason: 'sinOro' };
 
-  const free = state.castles.filter(
-    (c) => c.owner === null && !state.units.some((u) => u.id !== unit.id && u.x === c.x && u.y === c.y)
-  );
-  if (free.length === 0) return { ok: false, reason: 'sinCastillo' };
-
-  free.sort(
-    (a, b) =>
-      Math.abs(a.x - unit.x) + Math.abs(a.y - unit.y) - (Math.abs(b.x - unit.x) + Math.abs(b.y - unit.y))
-  );
-  const castle = free[0];
+  const dist = (c) => Math.abs(c.x - unit.x) + Math.abs(c.y - unit.y);
+  const candidates = state.castles.filter((c) => {
+    if (c.owner === null) return !state.units.some((u) => u.id !== unit.id && u.x === c.x && u.y === c.y);
+    if (c.owner !== player.id) return false;
+    const inside = c.garrison.filter((g) => g.unitId !== unit.id).length;
+    return inside < (CASTLE_LEVELS[c.level] || CASTLE_LEVELS[1]).militaryCapacity;
+  });
+  candidates.sort((a, b) => dist(a) - dist(b));
+  const castle = candidates[0] || null;
 
   player.gold -= PHOENIX_REVIVE_COST;
   player.phoenixRevived = true;
-  removeUnitFromCastleGarrison(state, unit.id);
   unit.hp = unit.maxHp;
+  unit.movedThisTurn = true;
+  unit.attackedThisTurn = true;
+
+  if (!castle) {
+    return { ok: true, castleId: unit.castleId || null, x: unit.x, y: unit.y, inPlace: true };
+  }
+  removeUnitFromCastleGarrison(state, unit.id);
   unit.x = castle.x;
   unit.y = castle.y;
   unit.castleId = castle.id;
-  unit.movedThisTurn = true;
-  unit.attackedThisTurn = true;
   castle.owner = player.id;
   castle.garrison.push({ unitId: unit.id });
   return { ok: true, castleId: castle.id, x: castle.x, y: castle.y };
@@ -146,7 +151,7 @@ function killUnit(state, unit) {
     if (res.ok) {
       queueEvent(state, {
         type: 'phoenixRevived', event: 'phoenixRevived',
-        playerId: unit.owner, unitId: unit.id, castleId: res.castleId, to: { x: res.x, y: res.y },
+        playerId: unit.owner, unitId: unit.id, castleId: res.castleId, inPlace: !!res.inPlace, to: { x: res.x, y: res.y },
       });
       return { revived: true };
     }

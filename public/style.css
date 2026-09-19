@@ -1155,3 +1155,44 @@ button:disabled {
   border-radius: 3px;
   padding: 1px 5px;
 }
+
+
+/* ===== Mejoras visuales ===== */
+/* Temporizador de turno */
+.turn-timer {
+  margin-left: 10px; padding: 1px 8px; border-radius: 10px;
+  font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 700;
+  background: rgba(255,255,255,0.07); color: var(--ink-dim, #a9b7c6);
+  transition: background 0.3s, color 0.3s;
+}
+.turn-timer:empty { display: none; }
+.turn-timer.warn { background: rgba(229,185,63,0.2); color: #e5b93f; }
+.turn-timer.urgent { background: rgba(226,104,90,0.28); color: #ff8a7a; animation: timer-pulse 0.5s ease-in-out infinite alternate; }
+@keyframes timer-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
+
+/* Castillos: icono propio con brillo del color del dueño */
+.castle-icon { opacity: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7)); transition: filter 0.3s; }
+.castle-icon.owned { filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 1px 2px rgba(0,0,0,0.7)); animation: castle-glow 3.2s ease-in-out infinite; }
+@keyframes castle-glow {
+  0%, 100% { filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 1px 2px rgba(0,0,0,0.7)); }
+  50% { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 1px 2px rgba(0,0,0,0.7)); }
+}
+.castle-badge { filter: drop-shadow(0 0 3px rgba(0,0,0,0.6)); }
+
+/* Tablero y tarjetas */
+#board-svg { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.55)); border-radius: 6px; }
+.player-card { transition: transform 0.2s, box-shadow 0.25s, border-color 0.25s; }
+.player-card.current-turn { box-shadow: 0 0 0 1px var(--gold, #d8ad5c), 0 0 16px rgba(216,173,92,0.25); transform: translateX(3px); }
+.sel-hpbar i { transition: width 0.45s ease, background 0.3s; }
+.world-card .wc-despawn { margin-top: 5px; font-size: 11px; color: #e5b93f; font-variant-numeric: tabular-nums; }
+
+/* Nuevos climas */
+.rain-drop { fill: #8fd8ff; stroke: #d6f2ff; stroke-width: 0.5; opacity: 0; filter: drop-shadow(0 0 3px #6ec6ff); animation: acid-fall linear infinite; }
+.heal-plus { fill: none; stroke: #b9ffd0; stroke-width: 2.2; stroke-linecap: round; opacity: 0; animation: heal-pop 2.2s ease-in-out infinite; }
+@keyframes heal-pop { 0%, 100% { opacity: 0; transform: translateY(2px); } 50% { opacity: 1; transform: translateY(-3px); } }
+.eclipse-disc { fill: #120a24; stroke: #b39cff; stroke-width: 1; opacity: 0.85; animation: eclipse-breathe 3s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.eclipse-corona { fill: none; stroke: #b39cff; stroke-width: 1.2; opacity: 0.5; filter: drop-shadow(0 0 5px #8a6fd6); }
+@keyframes eclipse-breathe { 0%, 100% { transform: scale(0.9); } 50% { transform: scale(1.1); } }
+.aurora-ribbon { fill: none; stroke: #7dffcf; stroke-width: 2; stroke-linecap: round; opacity: 0; filter: drop-shadow(0 0 4px #5fe0b0); animation: aurora-wave 3.4s ease-in-out infinite; }
+@keyframes aurora-wave { 0%, 100% { opacity: 0; transform: translateX(-4px); } 50% { opacity: 0.85; transform: translateX(4px); } }
+.aurora-spark { fill: #fff6b0; opacity: 0; animation: bolt-flash 1.8s steps(1) infinite; filter: drop-shadow(0 0 4px #ffe680); }

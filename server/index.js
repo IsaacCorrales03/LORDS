@@ -18,6 +18,7 @@ const {
 const actions = require('./actions');
 
 const PORT = process.env.PORT || 3000;
+const TURN_TIME_MS = 45000; // tiempo máximo por turno
 
 const app = express();
 const server = http.createServer(app);
@@ -57,10 +58,52 @@ function serializeState(s) {
     activeCreatures: getActiveCreatures(s),
     activeWeather: s.activeWeather,
     turnCounter: s.turnCounter,
+    turnDeadline: s.turnDeadline || null,
+    serverNow: Date.now(),
   };
 }
 
+// --- Temporizador de turno ---
+// Se re-arma solo cuando cambia el turno (turnCounter + jugador actual). Si el
+// jugador no termina a tiempo, su turno se cierra automáticamente.
+let turnTimer = null;
+let turnTimerToken = null;
+
+function clearTurnTimer() {
+  if (turnTimer) clearTimeout(turnTimer);
+  turnTimer = null;
+  turnTimerToken = null;
+  if (state) state.turnDeadline = null;
+}
+
+function syncTurnTimer() {
+  if (!state || state.phase !== 'playing') { clearTurnTimer(); return; }
+  const currentId = state.turnOrder[state.currentTurnIndex];
+  if (!currentId) { clearTurnTimer(); return; }
+  const token = `${state.turnCounter}:${currentId}`;
+  if (token === turnTimerToken) return;
+  if (turnTimer) clearTimeout(turnTimer);
+  turnTimerToken = token;
+  state.turnDeadline = Date.now() + TURN_TIME_MS;
+  turnTimer = setTimeout(() => onTurnTimeout(token, currentId), TURN_TIME_MS);
+}
+
+function onTurnTimeout(token, playerId) {
+  if (!state || state.phase !== 'playing' || token !== turnTimerToken) return;
+  try {
+    io.emit('action:log', { type: 'turnTimeout', event: 'turnTimeout', playerId });
+    const result = actions.endTurn(state, playerId);
+    broadcastState();
+    emitTurnResult(result);
+    flushEvents();
+    if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+  } catch (err) {
+    console.error('[timeout de turno]', err.message);
+  }
+}
+
 function broadcastState() {
+  syncTurnTimer();
   io.emit('state:update', serializeState(state));
 }
 
@@ -82,6 +125,9 @@ function emitTurnResult(result) {
   if (result.weather && result.weather.expired) {
     io.emit('action:log', { type: 'weatherEnded', event: 'weatherEnded', weather: result.weather.expired });
   }
+  (result.despawnedCreatures || []).forEach((c) => {
+    io.emit('action:log', { type: 'creatureDespawned', event: 'creatureDespawned', creature: c, to: { x: c.x, y: c.y } });
+  });
   if (result.spawnedCreature) {
     io.emit('action:log', {
       type: 'creatureSpawned',
@@ -365,6 +411,7 @@ io.on('connection', (socket) => {
 
     // Sin nadie conectado, se libera la sala para poder crear otra partida.
     if (io.of('/').sockets.size === 0) {
+      clearTurnTimer();
       state = null;
     }
     broadcastState();

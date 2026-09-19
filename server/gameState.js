@@ -66,10 +66,11 @@ const RANKS = {
   grifo: 8, // criatura domada al derrotar al Grifo; no se produce en castillo
 };
 
+// Capacidad militar fija en 2 para todos los niveles (mejorar ya no la aumenta).
 const CASTLE_LEVELS = {
   1: { upgradeCost: 0, goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2, defenseBonus: 0 },
-  2: { upgradeCost: 15, goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3, defenseBonus: 0 },
-  3: { upgradeCost: 50, goldPerTurn: 5, militaryCapacity: 4, maxFarms: 4, defenseBonus: 1 },
+  2: { upgradeCost: 15, goldPerTurn: 4, militaryCapacity: 2, maxFarms: 3, defenseBonus: 0 },
+  3: { upgradeCost: 50, goldPerTurn: 5, militaryCapacity: 2, maxFarms: 4, defenseBonus: 1 },
 };
 
 const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'pink'];
@@ -351,7 +352,7 @@ function startGame(state) {
     const castleId = state.playerStartCastleIds[index];
     const castle = state.castles.find((c) => c.id === castleId);
     player.castleId = castleId;
-    player.gold = 20;
+    player.gold = 30;
     castle.owner = player.id;
     castle.hasKing = true;
 

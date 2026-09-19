@@ -10,14 +10,17 @@
 //     dio el golpe final, en la misma casilla.
 
 const { resolveAttack } = require('./combat');
+const { getActiveCreatures, maxCreaturesFor } = require('./gameState');
 const { getRandomAccessibleFreeTile } = require('./terrain');
 const {
   createUnit, findUnit, findPlayer, isPlayersTurn, killUnit,
   applyPoison, applyPetrify, isPetrified,
 } = require('./units');
+const { isUnitDisarmed } = require('./weather');
 
 const CREATURE_START_ROUND = 5;
 const CREATURE_INTERVAL_TURNS = 3;
+const CREATURE_DESPAWN_ROUNDS = 10; // rondas que dura una criatura sin morir
 
 // weight = probabilidad en % (suman 100). Se reajustó respecto a la spec
 // original para dejarle lugar a grifo, basilisco y medusa.
@@ -51,12 +54,12 @@ function pickCreatureType() {
 
 function isTileFreeForCreature(state, x, y) {
   if (state.units.some((u) => u.x === x && u.y === y)) return false;
-  if (state.activeCreature && state.activeCreature.x === x && state.activeCreature.y === y) return false;
+  if (getActiveCreatures(state).some((c) => c.x === x && c.y === y)) return false;
   return true;
 }
 
 function tickCreatureSpawn(state) {
-  if (state.activeCreature) return null;
+  if (getActiveCreatures(state).length >= maxCreaturesFor(state.maxPlayers)) return null;
   if (state.round < CREATURE_START_ROUND) return null;
   if (state.turnCounter <= 0 || state.turnCounter % CREATURE_INTERVAL_TURNS !== 0) return null;
 
@@ -73,17 +76,34 @@ function tickCreatureSpawn(state) {
     hp: stats.hp,
     maxHp: stats.hp,
     atk: stats.atk,
+    spawnedRound: state.round,
+    despawnRound: state.round + CREATURE_DESPAWN_ROUNDS,
   };
-  state.activeCreature = creature;
+  if (!Array.isArray(state.activeCreatures)) state.activeCreatures = [];
+  state.activeCreatures.push(creature);
   return creature;
+}
+
+// Cada criatura desaparece si lleva CREATURE_DESPAWN_ROUNDS rondas sin morir.
+// Devuelve la lista de criaturas retiradas.
+function tickCreatureDespawn(state) {
+  const gone = getActiveCreatures(state).filter((c) => c.despawnRound !== undefined && state.round >= c.despawnRound);
+  if (gone.length > 0) removeCreatures(state, gone.map((c) => c.id));
+  return gone;
+}
+
+function removeCreatures(state, ids) {
+  const keep = getActiveCreatures(state).filter((c) => !ids.includes(c.id));
+  state.activeCreatures = keep;
+  state.activeCreature = null; // campo legado
 }
 
 // La Hidra regenera vida al cierre de cada ronda si sigue viva.
 function tickCreatureRegen(state) {
-  const c = state.activeCreature;
-  if (!c) return;
-  const regen = CREATURE_STATS[c.type].regen;
-  if (regen && c.hp < c.maxHp) c.hp = Math.min(c.maxHp, c.hp + regen);
+  getActiveCreatures(state).forEach((c) => {
+    const regen = CREATURE_STATS[c.type].regen;
+    if (regen && c.hp < c.maxHp) c.hp = Math.min(c.maxHp, c.hp + regen);
+  });
 }
 
 function isAdjacent(unit, creature) {
@@ -94,17 +114,18 @@ function isAdjacent(unit, creature) {
 
 // Una ficha propia adyacente ataca a la criatura activa. Varias fichas pueden
 // atacarla en el mismo turno; cada ficha ataca una sola vez por turno.
-function attackCreature(state, playerId, unitId) {
+function attackCreature(state, playerId, unitId, creatureId) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
 
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
   if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
+  if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
   if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
 
-  const creature = state.activeCreature;
-  if (!creature) throw new Error('No hay ninguna criatura para atacar');
+  const creature = getActiveCreatures(state).find((c) => c.id === creatureId);
+  if (!creature) throw new Error('Esa criatura ya no está en el tablero');
   if (!isAdjacent(unit, creature)) throw new Error('La ficha debe estar adyacente a la criatura');
 
   const result = resolveAttack(unit, creature);
@@ -138,7 +159,7 @@ function attackCreature(state, playerId, unitId) {
       log.event = 'creatureDefeated';
       log.goldReward = stats.goldReward;
     }
-    state.activeCreature = null;
+    removeCreatures(state, [creature.id]);
   } else if (result.attackerDied) {
     const kill = killUnit(state, unit);
     log.event = kill.revived ? 'attackerRevived' : 'attackerLostToCreature';
@@ -171,6 +192,8 @@ module.exports = {
   CREATURE_STATS,
   tickCreatureSpawn,
   tickCreatureRegen,
+  tickCreatureDespawn,
+  CREATURE_DESPAWN_ROUNDS,
   attackCreature,
   isAdjacent,
 };

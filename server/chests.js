@@ -7,18 +7,18 @@ const { getRandomAccessibleFreeTile } = require('./terrain');
 const { queueEvent, findPlayer, findUnit } = require('./units');
 const { getActiveCreatures } = require('./gameState');
 
-const CHEST_START_ROUND = 2;
-const CHEST_SPAWN_CHANCE = 0.3; // probabilidad por turno cuando hay cupo
-// peso = probabilidad relativa de cada premio
+const CHEST_START_ROUND = 3;
+const CHEST_SPAWN_CHANCE = 0.12; // probabilidad por turno cuando hay cupo (antes 0.3)
+// peso = probabilidad relativa de cada premio (recompensas bajadas: antes 10-50, ahora 5-25)
 const CHEST_REWARDS = [
+  { gold: 5, weight: 40 },
   { gold: 10, weight: 30 },
-  { gold: 20, weight: 30 },
-  { gold: 30, weight: 25 },
-  { gold: 50, weight: 15 },
+  { gold: 15, weight: 20 },
+  { gold: 25, weight: 10 },
 ];
 
 function maxChestsFor(state) {
-  return Math.max(2, state.maxPlayers);
+  return Math.max(1, Math.ceil(state.maxPlayers / 2)); // antes: Math.max(2, maxPlayers)
 }
 
 function pickReward() {
@@ -30,7 +30,6 @@ function pickReward() {
 
 function isTileFreeForChest(state, x, y) {
   if (state.tiles[y][x].type === 'farm') return false;
-  if (state.tiles[y][x].type === 'barrier') return false;
   if (state.units.some((u) => u.x === x && u.y === y)) return false;
   if (getActiveCreatures(state).some((c) => c.x === x && c.y === y)) return false;
   if ((state.chests || []).some((c) => c.x === x && c.y === y)) return false;

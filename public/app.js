@@ -7,14 +7,18 @@ const socket = io();
 const UNIT_LABELS = {
   rey: 'Rey', peon: 'Peón', caballo: 'Caballo', alfil: 'Alfil', torre: 'Torre', reina: 'Reina',
   dragon: 'Dragón', fenix: 'Fénix', lobo: 'Lobo', golem: 'Golem', hidra: 'Hidra',
+  grifo: 'Grifo', basilisco: 'Basilisco', medusa: 'Medusa',
 };
 // Criaturas neutrales: color de aura, recompensa y nota corta para el panel.
 const CREATURE_INFO = {
-  lobo:   { color: '#8fa3b8', reward: '10 de oro', note: 'Rápido y mordedor.' },
-  golem:  { color: '#b58a5a', reward: '14 de oro', note: 'Lento pero duro.' },
-  dragon: { color: '#e2685a', reward: 'Se doma como tropa', note: 'Vuela sobre los abismos.' },
-  hidra:  { color: '#6fcf97', reward: '60 de oro', note: 'Regenera +2 de vida por ronda.' },
-  fenix:  { color: '#ffb347', reward: 'Se doma como tropa', note: 'Resucita una vez por jugador (10 de oro, en el castillo más cercano).' },
+  lobo:      { color: '#8fa3b8', reward: '10 de oro', note: 'Rápido y mordedor.' },
+  golem:     { color: '#b58a5a', reward: '14 de oro', note: 'Lento pero duro.' },
+  dragon:    { color: '#e2685a', reward: 'Se doma como tropa', note: 'Vuela sobre los abismos.' },
+  hidra:     { color: '#6fcf97', reward: '60 de oro', note: 'Regenera +2 de vida por ronda.' },
+  fenix:     { color: '#ffb347', reward: 'Se doma como tropa', note: 'Resucita una vez por jugador (10 de oro, en el castillo más cercano).' },
+  grifo:     { color: '#c9c2e8', reward: 'Se doma como tropa', note: 'Salta esquinas 2x2, sin bloqueo, igual que el Caballo.' },
+  basilisco: { color: '#7fae5c', reward: '25 de oro', note: 'Si contraataca, envenena (2 de daño por turno, 3 turnos).' },
+  medusa:    { color: '#9c7fc9', reward: '35 de oro', note: 'Si contraataca, petrifica (no se puede mover ni atacar por 2 turnos).' },
 };
 const WEATHER_INFO = {
   electrica: { label: 'Tormenta eléctrica', color: '#f5d84a', note: '-1 de vida por turno a quien esté dentro.' },
@@ -83,7 +87,7 @@ const UNIT_ICON_PATHS = {
   reina: '<path d="M3 17.5 L3 11.5 L6.3 13.8 L9 8.3 L12 12.2 L15 8.3 L17.7 13.8 L21 11.5 L21 17.5 Z" fill="currentColor"/><rect x="3" y="17.5" width="18" height="2.1" fill="currentColor"/><circle cx="12" cy="8.3" r="1.25" fill="currentColor"/><circle cx="6.3" cy="13.8" r="0.9" fill="currentColor"/><circle cx="17.7" cy="13.8" r="0.9" fill="currentColor"/>',
   torre: '<path d="M6.5 20 L6.5 9.6 L8.3 9.6 L8.3 11 L10.6 11 L10.6 9.6 L13.4 9.6 L13.4 11 L15.7 11 L15.7 9.6 L17.5 9.6 L17.5 20 Z" fill="currentColor"/><rect x="6.5" y="7.4" width="11" height="2.2" fill="currentColor"/>',
   alfil: '<path d="M12 3.2 C9.1 6.3 7.9 9.8 7.9 12.9 C7.9 16.1 9.6 18.1 12 19.2 C14.4 18.1 16.1 16.1 16.1 12.9 C16.1 9.8 14.9 6.3 12 3.2 Z" fill="currentColor"/><rect x="11.1" y="6.6" width="1.8" height="5.2" fill="var(--panel)"/><rect x="9.1" y="8.6" width="5.8" height="1.4" fill="var(--panel)"/><circle cx="12" cy="20.6" r="1.35" fill="currentColor"/>',
-  caballo: '<path d="M7.2 20 L7.2 12.2 A4.8 4.8 0 0 1 16.8 12.2 L16.8 20" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="8.4" cy="14.6" r="0.85" fill="currentColor"/><circle cx="10.3" cy="12" r="0.85" fill="currentColor"/><circle cx="13.7" cy="12" r="0.85" fill="currentColor"/><circle cx="15.6" cy="14.6" r="0.85" fill="currentColor"/>',
+  caballo: '<path d="M8 21.7 L8 15.2 C8 13.1 7.3 12.3 6.4 11.2 C5.6 10.2 5.5 8.8 6.3 7.7 C7 6.7 8.3 6.4 9.3 7 L9.6 5.6 C9.8 4.7 10.8 4.3 11.5 4.9 L13 6.1 C14.3 5.3 16 5.5 17 6.6 L18.8 8.6 C19.4 9.3 19.2 10.3 18.4 10.7 L16.7 11.6 C17 12.5 16.7 13.5 15.9 14 L14.6 14.8 L14.6 21.7 Z" fill="currentColor"/><path d="M9.6 7 C10.6 8 11.6 8.3 12.8 8.1" fill="none" stroke="#0c1119" stroke-width="0.9" stroke-linecap="round"/><circle cx="16" cy="9" r="0.85" fill="#0c1119"/><rect x="5.6" y="20" width="10.4" height="2.1" fill="currentColor"/>',
   peon: '<circle cx="12" cy="7.4" r="3" fill="currentColor"/><path d="M8.6 20 L9.6 12.4 H14.4 L15.4 20 Z" fill="currentColor"/><rect x="7.4" y="19" width="9.2" height="2.1" fill="currentColor"/>',
 };
 
@@ -95,6 +99,9 @@ Object.assign(UNIT_ICON_PATHS, {
   dragon: '<path d="M12 21 L8.2 15.6 L1.8 16.6 L5 10.4 L2.4 4.6 L9 7.6 L12 5 L15 7.6 L21.6 4.6 L19 10.4 L22.2 16.6 L15.8 15.6 Z" fill="currentColor"/><path d="M9.6 10.2 L11.2 11.2 L9.6 11.9 Z" fill="#0c1119"/><path d="M14.4 10.2 L12.8 11.2 L14.4 11.9 Z" fill="#0c1119"/>',
   hidra: '<path d="M12 20 V12.5 M12 20 C8 19 5.5 15 6 8.5 M12 20 C16 19 18.5 15 18 8.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="10.2" r="2.5" fill="currentColor"/><circle cx="6" cy="7" r="2.5" fill="currentColor"/><circle cx="18" cy="7" r="2.5" fill="currentColor"/><ellipse cx="12" cy="20.4" rx="5.2" ry="2" fill="currentColor"/><circle cx="11.2" cy="9.9" r="0.6" fill="#0c1119"/><circle cx="12.8" cy="9.9" r="0.6" fill="#0c1119"/>',
   fenix: '<path d="M12 14.4 C8 14.4 3.6 11.2 1.8 4.6 C6.8 6.4 10 7 12 10 C14 7 17.2 6.4 22.2 4.6 C20.4 11.2 16 14.4 12 14.4 Z" fill="currentColor"/><path d="M12 22.2 C9.2 19.4 9.2 17 12 14.6 C14.8 17 14.8 19.4 12 22.2 Z" fill="currentColor"/><circle cx="12" cy="8.2" r="2.2" fill="currentColor"/><path d="M12 3.2 L13 6 H11 Z" fill="currentColor"/>',
+  grifo: '<path d="M12 2.2 C9.6 2.2 8.3 4.3 8.5 6.4 L4 5.4 L8.9 9.3 C9 10.6 9.8 11.6 11 12 L9.2 21.5 H10.8 L12 15.4 L13.2 21.5 H14.8 L13 12 C14.2 11.6 15 10.6 15.1 9.3 L20 5.4 L15.5 6.4 C15.7 4.3 14.4 2.2 12 2.2 Z" fill="currentColor"/><circle cx="10.4" cy="6.6" r="0.75" fill="#0c1119"/><path d="M8.8 8.2 L11.6 9" stroke="#0c1119" stroke-width="0.8" fill="none" stroke-linecap="round"/>',
+  basilisco: '<path d="M4 20 C4 20 6 21 8 19 C10 17 8 15 10 13 C12 11 15 13 16 10 C17 7 14 6 15 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M13.2 2.6 L14.4 4.4 L15.6 2.6 L16.8 4.4 L18 2.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15.6" cy="4.6" r="0.7" fill="#0c1119"/>',
+  medusa: '<circle cx="12" cy="14" r="5" fill="currentColor"/><path d="M6 9 C5 6 6 3 4 2 M8 8 C7.5 5 8.5 2.5 7 1.5 M12 7.5 C12 4.5 12.5 2 11 1 M16 8 C16.5 5 15.5 2.5 17 1.5 M18 9 C19 6 18 3 20 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10.2" cy="13.3" r="0.75" fill="#0c1119"/><circle cx="13.8" cy="13.3" r="0.75" fill="#0c1119"/><path d="M10.4 16.6 Q12 17.6 13.6 16.6" stroke="#0c1119" stroke-width="0.9" fill="none" stroke-linecap="round"/>',
 });
 
 // Icono propio del castillo (distinto al de la Torre): muralla con dos torreones,
@@ -110,6 +117,20 @@ function unitIconMarkup(type) {
   return UNIT_ICON_PATHS[type] || UNIT_ICON_PATHS.peon;
 }
 
+// Gavilla de trigo (granja): tallos que abren en abanico desde una atadura.
+const FARM_ICON = '<path d="M12 21 L12 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>'
+  + '<path d="M12 21 C9 17 8 12 6 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+  + '<path d="M12 21 C15 17 16 12 18 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+  + '<path d="M12 21 C10.5 16 10 10 9 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+  + '<path d="M12 21 C13.5 16 14 10 15 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+  + '<rect x="9.4" y="18.6" width="5.2" height="2.3" rx="0.6" fill="currentColor"/>';
+
+// Empalizada (barrera): estacas puntiagudas de distinta altura, con una viga que las une.
+const BARRIER_ICON = '<path d="M4 21 L4 9.5 L6 4.5 L8 9.5 L8 21 Z" fill="currentColor"/>'
+  + '<path d="M10 21 L10 7 L12 2.3 L14 7 L14 21 Z" fill="currentColor"/>'
+  + '<path d="M16 21 L16 9.5 L18 4.5 L20 9.5 L20 21 Z" fill="currentColor"/>'
+  + '<rect x="3" y="12.3" width="18" height="2.3" fill="#0c1119" fill-opacity="0.55"/>';
+
 // --- Estado local del cliente ---
 let myId = null;
 let currentState = null;
@@ -117,6 +138,7 @@ let selectedUnitId = null;
 let selectedCastleId = null;
 let inspectedUnitId = null; // ficha rival/propia ajena vista en el panel, sin seleccionarla
 let inspectedCreatureId = null; // id de la criatura que se ve en el panel (null = ninguna)
+let inspectedBarrierId = null; // id de la barrera (propia o rival) que se ve en el panel
 const CASTLE_LEVEL_INFO = {
   1: { goldPerTurn: 3, militaryCapacity: 2, maxFarms: 2 },
   2: { goldPerTurn: 4, militaryCapacity: 3, maxFarms: 3 },
@@ -217,6 +239,30 @@ const eventBannerDot = document.getElementById('eventBannerDot');
 const eventBannerText = document.getElementById('eventBannerText');
 const btnSurrender = document.getElementById('btnSurrender');
 const btnEndGame = document.getElementById('btnEndGame');
+const confirmOverlay = document.getElementById('confirm-overlay');
+const confirmTitleEl = document.getElementById('confirmTitle');
+const confirmBodyEl = document.getElementById('confirmBody');
+const confirmOkBtn = document.getElementById('confirmOk');
+const confirmCancelBtn = document.getElementById('confirmCancel');
+
+// Modal de confirmación genérico: title/body descriptivos + callback si se confirma.
+// Se usa antes de cualquier ataque, para que no se dispare un combate por error.
+let confirmResolve = null;
+function askConfirm(title, body) {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    confirmTitleEl.textContent = title;
+    confirmBodyEl.textContent = body;
+    confirmOverlay.classList.add('active');
+  });
+}
+function closeConfirm(result) {
+  confirmOverlay.classList.remove('active');
+  if (confirmResolve) { confirmResolve(result); confirmResolve = null; }
+}
+confirmOkBtn.addEventListener('click', () => { SFX.play('ui_click'); closeConfirm(true); });
+confirmCancelBtn.addEventListener('click', () => { SFX.play('deselect'); closeConfirm(false); });
+confirmOverlay.addEventListener('click', (e) => { if (e.target === confirmOverlay) closeConfirm(false); });
 const matchTimerEl = document.getElementById('matchTimer');
 let matchElapsedBaseMs = null;
 let matchElapsedBaseAt = null;
@@ -473,7 +519,7 @@ function renderPlayers(state) {
         <span title="Oro"><svg class="stat-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg> <b class="gold-value" data-player="${p.id}">${castleOrZero(p)}</b></span>
         <span title="Ingreso por ronda"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 16 L9 10 L13 13 L20 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 5 H20 V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> <b>+${incomeOf(state, p.id)}</b></span>
         <span title="Nivel de castillo"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 20 V10 L8 13 L12 7 L16 13 L20 10 V20 Z" fill="currentColor"/></svg> <b>${castle ? castle.level : '—'}</b></span>
-        <span title="Granjas"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 20 V11 L12 5 L20 11 V20 Z" fill="currentColor"/><rect x="9.3" y="13.6" width="5.4" height="6.4" fill="var(--panel-2)"/></svg> <b>${castle ? castle.farms : 0}</b></span>
+        <span title="Granjas"><svg class="stat-icon" viewBox="0 0 24 24">${FARM_ICON}</svg> <b>${castle ? castle.farms : 0}</b></span>
       </div>
     `;
     playersList.appendChild(card);
@@ -731,8 +777,21 @@ function renderBoard(state) {
       }
       if (isReachable) {
         rect.addEventListener('click', () => {
-          reachableTiles = [];
-          socket.emit('action:move', { unitId: selectedUnitId, x, y });
+          const targetUnit = state.units.find((u) => u.x === x && u.y === y && u.owner !== myId);
+          const doMove = () => {
+            reachableTiles = [];
+            socket.emit('action:move', { unitId: selectedUnitId, x, y });
+          };
+          if (targetUnit) {
+            const mover = state.units.find((u) => u.id === selectedUnitId);
+            const owner = state.players.find((p) => p.id === targetUnit.owner);
+            askConfirm(
+              `¿Atacar a ${label(targetUnit.type)} de ${owner ? owner.name : 'otro jugador'}?`,
+              `Tu ${mover ? label(mover.type) : 'ficha'} (${mover ? mover.atk : '?'} ATQ) golpea primero. Tiene ${targetUnit.hp}/${targetUnit.maxHp} de vida; si sobrevive, contraataca por ${targetUnit.atk}.`
+            ).then((ok) => { if (ok) doMove(); });
+          } else {
+            doMove();
+          }
         });
       }
 
@@ -812,33 +871,53 @@ function renderBoard(state) {
         const fcx = x * TILE_SIZE + TILE_SIZE / 2;
         const fcy = y * TILE_SIZE + TILE_SIZE / 2;
 
-        const farmIcon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        farmIcon.setAttribute('class', 'farm-badge');
-        farmIcon.setAttribute('fill', '#0c1119');
-        farmIcon.setAttribute('transform', `translate(${fcx - 10}, ${fcy - 10}) scale(0.83)`);
-        farmIcon.innerHTML =
-          '<path d="M4 20 V11 L12 5 L20 11 V20 Z" fill="currentColor"/>' +
-          '<rect x="9.3" y="13.6" width="5.4" height="6.4" fill="var(--panel-2)"/>';
+        // Textura de surcos: 3 líneas curvas tenues, como tierra arada.
+        [0.32, 0.55, 0.78].forEach((f) => {
+          const fy = y * TILE_SIZE + TILE_SIZE * f;
+          const furrow = svgEl('path', {
+            d: `M${x * TILE_SIZE + 3} ${fy} Q${fcx} ${fy - 3} ${x * TILE_SIZE + TILE_SIZE - 3} ${fy}`,
+          }, 'farm-furrow');
+          boardSvg.appendChild(furrow);
+        });
 
+        const farmBadge = svgEl('circle', { cx: fcx, cy: fcy, r: TILE_SIZE / 2 - 8 }, 'farm-badge');
+        farmBadge.setAttribute('stroke', ownerPlayer ? PLAYER_COLOR_HEX[ownerPlayer.color] : '#888');
+        boardSvg.appendChild(farmBadge);
+
+        const farmIcon = svgEl('g', { transform: `translate(${fcx - 11}, ${fcy - 11}) scale(0.92)`, fill: '#ece3c9', color: '#ece3c9' }, 'farm-icon');
+        farmIcon.innerHTML = FARM_ICON;
         boardSvg.appendChild(farmIcon);
+
+        const farmTag = svgEl('text', { x: fcx, y: y * TILE_SIZE + 9, 'text-anchor': 'middle' }, 'farm-tag');
+        farmTag.textContent = `+${FARM_INCOME_CLIENT}`;
+        boardSvg.appendChild(farmTag);
       }
       if (tile.type === 'barrier') {
         const barrier = barrierAt(state, x, y);
         const bcx = x * TILE_SIZE + TILE_SIZE / 2;
         const bcy = y * TILE_SIZE + TILE_SIZE / 2;
 
-        const barrierIcon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        barrierIcon.setAttribute('class', 'barrier-badge');
-        barrierIcon.setAttribute('fill', '#0c1119');
-        barrierIcon.setAttribute('transform', `translate(${bcx - 10}, ${bcy - 10}) scale(0.83)`);
-        barrierIcon.innerHTML =
-          '<rect x="3" y="5" width="4" height="15" fill="currentColor"/>' +
-          '<rect x="10" y="4" width="4" height="16" fill="currentColor"/>' +
-          '<rect x="17" y="5" width="4" height="15" fill="currentColor"/>' +
-          '<rect x="2" y="10" width="20" height="3" fill="var(--panel-2)"/>';
+        // Textura de veta de madera: unas líneas verticales tenues.
+        [0.22, 0.5, 0.78].forEach((f) => {
+          const grain = svgEl('line', {
+            x1: x * TILE_SIZE + TILE_SIZE * f, y1: y * TILE_SIZE + 3,
+            x2: x * TILE_SIZE + TILE_SIZE * f, y2: y * TILE_SIZE + TILE_SIZE - 3,
+          }, 'barrier-grain');
+          boardSvg.appendChild(grain);
+        });
+
+        const barrierBadge = svgEl('circle', { cx: bcx, cy: bcy, r: TILE_SIZE / 2 - 8 }, 'barrier-badge');
+        barrierBadge.setAttribute('stroke', ownerPlayer ? PLAYER_COLOR_HEX[ownerPlayer.color] : '#888');
+        boardSvg.appendChild(barrierBadge);
+
+        const barrierIcon = svgEl('g', { transform: `translate(${bcx - 11}, ${bcy - 11}) scale(0.92)`, fill: '#ece3c9', color: '#ece3c9' }, 'barrier-icon');
+        barrierIcon.innerHTML = BARRIER_ICON;
         boardSvg.appendChild(barrierIcon);
 
         if (barrier) {
+          const barrierTag = svgEl('text', { x: bcx, y: y * TILE_SIZE + 9, 'text-anchor': 'middle' }, 'barrier-tag');
+          barrierTag.textContent = `Nv ${barrier.level}`;
+          boardSvg.appendChild(barrierTag);
           boardSvg.appendChild(hpBar(bcx, bcy + TILE_SIZE / 2 - 5, 24, barrier.hp, barrier.maxHp));
 
           const selUnitForBarrierAttack = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
@@ -846,6 +925,7 @@ function renderBoard(state) {
           const bHit = svgEl('circle', { cx: bcx, cy: bcy, r: TILE_SIZE / 2 - 2 }, 'unit-hit' + (barrierAttackable ? ' attackable-enemy' : ''));
           bHit.addEventListener('click', () => {
             if (barrierAttackable) attackBarrierWith(selUnitForBarrierAttack.id, barrier.id);
+            else inspectBarrier(barrier.id);
           });
           boardSvg.appendChild(bHit);
         }
@@ -1119,7 +1199,15 @@ function canAttackCreatureWith(unit, state, c) {
     && dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
 }
 
-function attackCreatureWith(unitId, creatureId) {
+async function attackCreatureWith(unitId, creatureId) {
+  const unit = currentState.units.find((u) => u.id === unitId);
+  const creature = creaturesOf(currentState).find((c) => c.id === creatureId);
+  if (!unit || !creature) return;
+  const ok = await askConfirm(
+    `¿Atacar a ${label(creature.type)}?`,
+    `Tu ${label(unit.type)} (${unit.atk} ATQ) golpea primero. Tiene ${creature.hp}/${creature.maxHp} de vida; si sobrevive, contraataca por ${creature.atk}.`
+  );
+  if (!ok) return;
   socket.emit('action:attackCreature', { unitId, creatureId });
 }
 
@@ -1185,7 +1273,16 @@ function canAttackUnitWith(unit, target, state) {
   return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
 }
 
-function attackUnitWith(unitId, targetId) {
+async function attackUnitWith(unitId, targetId) {
+  const unit = currentState.units.find((u) => u.id === unitId);
+  const target = currentState.units.find((u) => u.id === targetId);
+  if (!unit || !target) return;
+  const owner = currentState.players.find((p) => p.id === target.owner);
+  const ok = await askConfirm(
+    `¿Atacar a ${label(target.type)} de ${owner ? owner.name : 'otro jugador'}?`,
+    `Tu ${label(unit.type)} (${unit.atk} ATQ) golpea primero. Tiene ${target.hp}/${target.maxHp} de vida; si sobrevive, contraataca por ${target.atk}.`
+  );
+  if (!ok) return;
   socket.emit('action:attackUnit', { unitId, targetId });
 }
 
@@ -1204,7 +1301,17 @@ function canAttackBarrierWith(unit, barrier, state) {
   return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
 }
 
-function attackBarrierWith(unitId, barrierId) {
+async function attackBarrierWith(unitId, barrierId) {
+  const unit = currentState.units.find((u) => u.id === unitId);
+  const barrier = (currentState.barriers || []).find((b) => b.id === barrierId);
+  if (!unit || !barrier) return;
+  const owner = currentState.players.find((p) => p.id === barrier.owner);
+  const counter = BARRIER_COUNTER_DAMAGE_BY_LEVEL[barrier.level] || 0;
+  const ok = await askConfirm(
+    `¿Atacar la barrera (Nv ${barrier.level}) de ${owner ? owner.name : 'otro jugador'}?`,
+    `Tu ${label(unit.type)} (${unit.atk} ATQ) le pega. Tiene ${barrier.hp}/${barrier.maxHp} de vida${counter > 0 ? ` y contraataca por ${counter}` : ' (no contraataca)'}.`
+  );
+  if (!ok) return;
   socket.emit('action:attackBarrier', { unitId, barrierId });
 }
 
@@ -1232,6 +1339,14 @@ function inspectUnit(unitId) {
 function inspectCreature(creatureId) {
   inspectedCreatureId = creatureId == null ? null : creatureId;
   inspectedUnitId = null;
+  inspectedBarrierId = null;
+  renderSelection();
+}
+
+function inspectBarrier(barrierId) {
+  inspectedBarrierId = barrierId == null ? null : barrierId;
+  inspectedUnitId = null;
+  inspectedCreatureId = null;
   renderSelection();
 }
 
@@ -1241,6 +1356,7 @@ function selectUnit(unitId) {
   cancelFarmPlacement();
   inspectedUnitId = null;
   inspectedCreatureId = null;
+  inspectedBarrierId = null;
   selectedCastleId = null;
   if (selectedUnitId === unitId) {
     SFX.play('deselect');
@@ -1266,6 +1382,7 @@ function selectCastle(castleId) {
   selectedUnitId = null;
   inspectedUnitId = null;
   inspectedCreatureId = null;
+  inspectedBarrierId = null;
   reachableTiles = [];
   SFX.play(selectedCastleId === castleId ? 'deselect' : 'select_castle');
   selectedCastleId = selectedCastleId === castleId ? null : castleId;
@@ -1300,13 +1417,35 @@ function renderSelection() {
       selectionBox.innerHTML = `
         <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
           <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(c.type)}</svg>
-          <span>${UNIT_LABELS[c.type]}</span>
+          <span>${label(c.type)}</span>
         </div>
         <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">Neutral</b></div>
-        <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${UNIT_LABELS[c.type]}</b></div>
+        <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${label(c.type)}</b></div>
         <div class="stat-chips" style="margin-top:6px;">
           <span class="chip chip-atk" title="Ataque"><b>${c.atk}</b> ATQ</span>
           <span class="chip chip-hp" title="Vida"><b>${c.hp}</b>/${c.maxHp} VIDA</span>
+        </div>
+      `;
+      castleActions.style.display = 'none';
+      return;
+    }
+    const inspectedBarrier = inspectedBarrierId != null ? (currentState.barriers || []).find((b) => b.id === inspectedBarrierId) : null;
+    if (inspectedBarrier) {
+      const b = inspectedBarrier;
+      const owner = currentState.players.find((p) => p.id === b.owner);
+      const mine = b.owner === myId;
+      const counter = BARRIER_COUNTER_DAMAGE_BY_LEVEL[b.level] || 0;
+      selectionBox.innerHTML = `
+        <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+          <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${BARRIER_ICON}</svg>
+          <span>Barrera (Nv ${b.level})</span>
+        </div>
+        <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">${mine ? 'Tuya' : (owner ? escapeHtml(owner.name) : 'Desconocido')}</b></div>
+        <div style="color:var(--ink-dim); font-size:12px;">Se regenera por completo cada turno${counter > 0 ? ` · contraataca por ${counter}` : ' · no contraataca (Nv 1)'}</div>
+        <div class="sel-hpbar" style="margin-top:6px;"><i style="width:${Math.round((b.hp / b.maxHp) * 100)}%; background:${hpColor(b.hp / b.maxHp)}"></i></div>
+        <div class="stat-chips" style="margin-top:6px;">
+          <span class="chip chip-hp" title="Vida"><b>${b.hp}</b>/${b.maxHp} VIDA</span>
+          <span class="chip" title="Daño de contraataque"><b>${counter}</b> CONTRAATQ</span>
         </div>
       `;
       castleActions.style.display = 'none';
@@ -1319,10 +1458,10 @@ function renderSelection() {
         selectionBox.innerHTML = `
           <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
             <svg class="sel-icon" viewBox="0 0 24 24" fill="var(--gold-bright)" color="var(--gold-bright)">${unitIconMarkup(target.type)}</svg>
-            <span>${UNIT_LABELS[target.type]}</span>
+            <span>${label(target.type)}</span>
           </div>
           <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">${owner ? escapeHtml(owner.name) : 'Desconocido'}</b></div>
-          <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${UNIT_LABELS[target.type]}</b></div>
+          <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${label(target.type)}</b></div>
           <div class="stat-chips" style="margin-top:6px;">
             <span class="chip chip-atk" title="Ataque"><b>${target.atk}</b> ATQ</span>
             <span class="chip chip-hp" title="Vida"><b>${target.hp}</b>/${target.maxHp} VIDA</span>
@@ -1637,7 +1776,7 @@ const RULES_SLIDES = [
     <li>Un castillo <b>enemigo</b> con guarnición hay que ganarlo peleando: defienden primero las tropas y el Rey al final.</li>
     <li>Entrar a una <b>granja</b> enemiga la captura.</li>
     <li>Tu territorio (tu color) crece por donde pasas.</li></ul>` },
-  { title: 'Cofres y criaturas', body: `<ul><li><b>Cofres del tesoro:</b> aparecen al azar en cualquier casilla libre. Termina un movimiento encima para abrirlos y ganar <b>10 a 50 de oro</b>.</li>
+  { title: 'Cofres y criaturas', body: `<ul><li><b>Cofres del tesoro:</b> aparecen al azar en cualquier casilla libre (poco frecuentes). Termina un movimiento encima para abrirlos y ganar <b>5 a 25 de oro</b>.</li>
     <li><b>Criaturas</b> desde la ronda 5: derrotarlas da oro. El <b>Dragón, el Fénix y el Grifo</b> no mueren: se domestican y pasan a tu bando.</li>
     <li>Se marchan solas a las 10 rondas. Basilisco y Medusa envenenan o petrifican al contraatacar.</li></ul>` },
   { title: 'Clima', body: `<p>Desde la ronda 3 cae una tormenta sobre <b>9 casillas</b> durante 2 turnos:</p>

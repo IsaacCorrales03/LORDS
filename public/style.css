@@ -637,16 +637,22 @@ button:disabled {
   100% { transform: scale(1); opacity: 1; }
 }
 
-.farm-badge {
-  fill: #0c1119;
-  stroke-width: 2;
-  pointer-events: none;
+.farm-badge { fill: #0a0e15; stroke-width: 2; pointer-events: none; filter: drop-shadow(0 0 5px rgba(127, 210, 141, 0.55)); }
+.farm-icon { pointer-events: none; }
+.farm-furrow { fill: none; stroke: rgba(150, 200, 140, 0.22); stroke-width: 1.4; pointer-events: none; }
+.farm-tag {
+  font-size: 7.5px; font-weight: 800; fill: #cdeccd; pointer-events: none;
+  paint-order: stroke; stroke: rgba(0, 0, 0, 0.85); stroke-width: 2.2px;
+  font-family: var(--font-ui);
 }
 
-.barrier-badge {
-  fill: #0c1119;
-  stroke-width: 2;
-  pointer-events: none;
+.barrier-badge { fill: #0a0e15; stroke-width: 2.5; pointer-events: none; filter: drop-shadow(0 0 5px rgba(209, 130, 63, 0.55)); }
+.barrier-icon { pointer-events: none; }
+.barrier-grain { stroke: rgba(60, 40, 20, 0.35); stroke-width: 1; pointer-events: none; }
+.barrier-tag {
+  font-size: 7.5px; font-weight: 800; fill: #f0d9b5; pointer-events: none;
+  paint-order: stroke; stroke: rgba(0, 0, 0, 0.85); stroke-width: 2.2px;
+  font-family: var(--font-ui);
 }
 
 .unit-hit { cursor: pointer; fill: transparent; }
@@ -896,6 +902,50 @@ button:disabled {
 }
 
 #gameover-overlay.active { display: flex; animation: fade-in 0.35s ease; }
+
+/* ---------- Modal de confirmación (ataques y acciones sensibles) ---------- */
+
+#confirm-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 11, 0.78);
+  backdrop-filter: blur(2px);
+  align-items: center;
+  justify-content: center;
+  z-index: 110;
+}
+
+#confirm-overlay.active { display: flex; animation: fade-in 0.2s ease; }
+
+.confirm-card {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--gold-dim);
+  border-radius: 6px;
+  padding: 26px 30px;
+  max-width: 340px;
+  text-align: center;
+  animation: card-rise 0.3s var(--ease) both;
+  box-shadow: 0 30px 70px -25px rgba(0,0,0,0.8);
+}
+
+.confirm-card h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  margin: 0 0 10px;
+  color: var(--gold-bright);
+}
+
+.confirm-card p {
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+  white-space: pre-line;
+}
+
+.confirm-actions { display: flex; gap: 10px; justify-content: center; }
 
 .gameover-card {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));

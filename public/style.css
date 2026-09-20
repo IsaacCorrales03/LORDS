@@ -1,4 +1,13 @@
 :root {
+  /* ESTILO ÚNICO PARA TODOS LOS NAVEGADORES.
+     El juego ya trae su propio tema oscuro con colores fijos. `only light`
+     le prohíbe al navegador aplicar "forzar modo oscuro" (Opera GX, Chrome
+     Auto Dark...) o reinterpretar colores según el tema del sistema, y
+     `forced-color-adjust: none` evita que el modo de alto contraste
+     recolore fichas y casillas. */
+  color-scheme: only light;
+  forced-color-adjust: none;
+
   --bg: #0a0d13;
   --panel: #141b26;
   --panel-2: #182231;
@@ -529,16 +538,15 @@ button:disabled {
 .tile { stroke: #05080c; stroke-width: 0.6; transition: fill 0.5s ease; }
 .tile.neutral { fill: var(--neutral-tile); }
 .tile.territory { fill: var(--territory-tile); }
-.tile.farm { fill: #253526; }
+.tile.farm { fill: #2f4222; }
 .tile.barrier { fill: #3a3128; }
 
 .tile.checker { fill-opacity: 0.94; }
 
 .tile.reachable {
   cursor: pointer;
-  stroke: var(--gold);
-  stroke-width: 2;
-  animation: reachable-pulse 1.3s ease-in-out infinite;
+  stroke: var(--gold-bright);
+  stroke-width: 1;
 }
 .tile.reachable:hover { filter: brightness(1.55); }
 
@@ -637,12 +645,13 @@ button:disabled {
   100% { transform: scale(1); opacity: 1; }
 }
 
-.farm-badge { fill: #0a0e15; stroke-width: 2; pointer-events: none; filter: drop-shadow(0 0 5px rgba(127, 210, 141, 0.55)); }
-.farm-icon { pointer-events: none; }
-.farm-furrow { fill: none; stroke: rgba(150, 200, 140, 0.22); stroke-width: 1.4; pointer-events: none; }
+/* Granja: campo sembrado (surcos) + marco del dueño + establo con techo de su color */
+.farm-row { stroke: #7da24a; stroke-opacity: 0.55; stroke-width: 2; stroke-dasharray: 2.2 2.6; stroke-linecap: round; pointer-events: none; }
+.farm-frame { fill: none; stroke-width: 2; pointer-events: none; }
+.farm-icon { pointer-events: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55)); }
+.farm-pill { fill: #0a0e15; fill-opacity: 0.88; pointer-events: none; }
 .farm-tag {
-  font-size: 7.5px; font-weight: 800; fill: #cdeccd; pointer-events: none;
-  paint-order: stroke; stroke: rgba(0, 0, 0, 0.85); stroke-width: 2.2px;
+  font-size: 6.6px; font-weight: 800; fill: #cdeccd; pointer-events: none;
   font-family: var(--font-ui);
 }
 
@@ -1080,6 +1089,25 @@ button:disabled {
   50% { stroke-width: 4.5; }
 }
 
+/* Aviso de próxima criatura (un turno antes de que aparezca de verdad) */
+.telegraph-ring {
+  fill: none;
+  stroke: var(--tg-color, #f5d84a);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+  animation: telegraph-pulse 1s ease-in-out infinite, marching-ants 1.6s linear infinite;
+}
+.telegraph-icon { pointer-events: none; animation: telegraph-fade 1s ease-in-out infinite; }
+@keyframes telegraph-pulse {
+  0%, 100% { stroke-opacity: 0.45; }
+  50% { stroke-opacity: 1; }
+}
+@keyframes telegraph-fade {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.8; }
+}
+
 /* Clima */
 .weather-veil { fill-opacity: 0.20; animation: weather-pulse 2.4s ease-in-out infinite; }
 @keyframes weather-pulse { 0%, 100% { fill-opacity: 0.14; } 50% { fill-opacity: 0.28; } }
@@ -1140,6 +1168,7 @@ button:disabled {
   animation: fade-in 0.3s ease;
 }
 .world-card.muted { border-left-color: var(--panel-border); }
+.world-card.telegraph-card { border-left-style: dashed; }
 .world-card .wc-head { display: flex; align-items: center; gap: 7px; }
 .world-card .wc-head svg { width: 20px; height: 20px; flex-shrink: 0; }
 .world-card .wc-head b { font-family: var(--font-display); letter-spacing: 0.4px; color: var(--wc); }
@@ -1309,3 +1338,45 @@ button:disabled {
 
 .chest-badge { filter: drop-shadow(0 0 5px rgba(240, 200, 119, 0.85)); animation: chest-bob 2.2s ease-in-out infinite; pointer-events: none; }
 @keyframes chest-bob { 0%, 100% { transform-box: fill-box; opacity: 1; } 50% { opacity: 0.82; } }
+
+
+/* =====================================================================
+   MOVER UNA FICHA: se oscurece todo salvo casillas alcanzables, fichas
+   enemigas, granjas y barreras. Las alcanzables llevan un marco amarillo
+   grueso. Ambas capas ignoran el ratón (los clics llegan a lo de abajo).
+   ===================================================================== */
+.move-dim { fill: rgba(3, 5, 9, 0.74); pointer-events: none; }
+.move-dim.fresh { animation: dim-in 0.2s ease-out; }
+@keyframes dim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.reach-frame {
+  fill: none;
+  stroke: #ffd23f;
+  stroke-width: 3;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(255, 210, 63, 0.85));
+  animation: reach-frame-pulse 1.3s ease-in-out infinite;
+}
+@keyframes reach-frame-pulse {
+  0%, 100% { stroke-opacity: 0.78; }
+  50% { stroke-opacity: 1; }
+}
+
+/* =====================================================================
+   MEJORAS POR CRIATURAS: chips en la tarjeta del jugador, DEF, Hidra
+   ===================================================================== */
+.up-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.up-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; letter-spacing: 0.2px; line-height: 1;
+  padding: 3px 6px 3px 4px; border-radius: 3px;
+  background: #0d131b; border: 1px solid var(--panel-border); color: var(--ink);
+}
+.up-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+.up-chip.used { opacity: 0.55; }
+.chip-def b { color: #6fa8dc; }
+.hydra-note { color: #6fcf97; font-size: 11px; margin-top: 6px; line-height: 1.4; }
+
+/* Tropas especiales aún bloqueadas en el panel de producción */
+.action-btn.locked { opacity: 0.55; }
+.action-btn.locked .cost { color: var(--ink-dim); font-weight: 600; font-size: 11px; }

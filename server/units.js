@@ -3,7 +3,7 @@
 // habilidad de resurrección del Fénix) y cola de eventos para el historial.
 
 const { statsFor } = require('./combat');
-const { GARRISON_TROOP_LIMIT, garrisonTroopCount } = require('./gameState');
+const { GARRISON_TROOP_LIMIT, garrisonTroopCount, POISON_STRIKE } = require('./gameState');
 
 const PHOENIX_REVIVE_COST = 10;
 
@@ -18,6 +18,72 @@ function findUnit(state, unitId) {
 }
 function isPlayersTurn(state, playerId) {
   return state.phase === 'playing' && state.turnOrder[state.currentTurnIndex] === playerId;
+}
+
+// --- Mejoras permanentes (ver creatures.js) ---
+// Se calculan al pelear, no se guardan en la ficha. El Rey y las criaturas
+// neutrales no reciben bonos (solo las tropas de un jugador con la mejora).
+
+function upgradesOf(state, ownerId) {
+  const p = ownerId ? findPlayer(state, ownerId) : null;
+  return (p && p.upgrades) || null;
+}
+
+function troopAtkBonus(state, unit) {
+  if (!unit || unit.type === 'rey') return 0;
+  const up = upgradesOf(state, unit.owner);
+  return up ? up.atkBonus : 0;
+}
+
+function troopDefBonus(state, unit) {
+  if (!unit || unit.type === 'rey') return 0;
+  const up = upgradesOf(state, unit.owner);
+  return up ? up.defBonus : 0;
+}
+
+// Modificadores para duel(): atacante vs defensor (cualquiera puede ser una
+// criatura neutral, que no tiene dueño y por tanto no tiene bonos).
+function combatMods(state, attacker, defender) {
+  return {
+    attackerAtk: troopAtkBonus(state, attacker),
+    attackerDef: troopDefBonus(state, attacker),
+    defenderAtk: troopAtkBonus(state, defender),
+    defenderDef: troopDefBonus(state, defender),
+  };
+}
+
+// Mejora del Basilisco: si el golpe no mató al objetivo, lo envenena.
+// Devuelve true si aplicó el veneno.
+function applyStrikePoison(state, attacker, target) {
+  const up = upgradesOf(state, attacker && attacker.owner);
+  if (!up || !up.poisonStrike || !target || target.hp <= 0) return false;
+  applyPoison(target, POISON_STRIKE.damage, POISON_STRIKE.turns);
+  return true;
+}
+
+// --- Ataques: 1 por turno, salvo el 2º ataque de la Hidra ---
+// Mejora de la Hidra: 1 vez por turno (state.hydraUsedThisTurn), UNA sola
+// tropa que ya haya atacado de verdad puede atacar una segunda vez. Se usa
+// sola: la primera tropa que intenta un 2º ataque consume el permiso.
+
+// Lanza error si la ficha no puede atacar ahora. Devuelve { second } para
+// pasárselo a markAttacked() una vez validado todo el ataque.
+function ensureCanAttack(state, unit) {
+  if (!unit.attackedThisTurn) return { second: false };
+  const up = upgradesOf(state, unit.owner);
+  if (up && up.hydraStrike) {
+    if (unit.didAttackThisTurn && !state.hydraUsedThisTurn) return { second: true };
+    if (unit.didAttackThisTurn) throw new Error('Esa ficha ya atacó este turno (el 2º ataque de la Hidra ya se usó)');
+  }
+  throw new Error('Esa ficha ya atacó este turno');
+}
+
+// didAttackThisTurn distingue un ataque real de las fichas que solo tienen
+// attackedThisTurn=true por haber sido producidas o resucitadas este turno.
+function markAttacked(state, unit, attackInfo) {
+  unit.attackedThisTurn = true;
+  unit.didAttackThisTurn = true;
+  if (attackInfo && attackInfo.second) state.hydraUsedThisTurn = true;
 }
 
 // --- Estados: veneno (Basilisco) y petrificación (Medusa) ---
@@ -168,4 +234,6 @@ module.exports = {
   findPlayer, findCastle, findUnit, isPlayersTurn,
   queueEvent, createUnit, removeUnit, removeUnitFromCastleGarrison, killUnit,
   applyPoison, applyPetrify, isPetrified, tickUnitStatuses,
+  troopAtkBonus, troopDefBonus, combatMods, applyStrikePoison,
+  ensureCanAttack, markAttacked,
 };

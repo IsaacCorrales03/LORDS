@@ -46,6 +46,8 @@ function serializeState(s) {
       castleId: p.castleId,
       phoenixRevived: p.phoenixRevived,
       surrendered: !!p.surrendered,
+      upgrades: p.upgrades || null, // mejoras permanentes por criaturas derrotadas
+      unlockedUnits: p.unlockedUnits || [], // tropas especiales desbloqueadas
     })),
     turnOrder: s.turnOrder,
     currentTurnIndex: s.currentTurnIndex,
@@ -56,10 +58,12 @@ function serializeState(s) {
     farms: s.farms,
     winner: s.winner,
     activeCreatures: getActiveCreatures(s),
+    pendingCreatureSpawn: s.pendingCreatureSpawn || null,
     activeWeather: s.activeWeather,
     chests: s.chests || [],
     barriers: s.barriers || [],
     turnCounter: s.turnCounter,
+    hydraUsedThisTurn: !!s.hydraUsedThisTurn,
     turnDeadline: s.turnDeadline || null,
     startedAt: s.startedAt || null,
     postGameChoices: s.postGameChoices || {},
@@ -169,6 +173,14 @@ function emitTurnResult(result) {
       event: 'creatureSpawned',
       creature: result.spawnedCreature,
       to: { x: result.spawnedCreature.x, y: result.spawnedCreature.y },
+    });
+  }
+  if (result.telegraphedCreature) {
+    io.emit('action:log', {
+      type: 'creatureTelegraph',
+      event: 'creatureTelegraph',
+      creature: result.telegraphedCreature,
+      to: { x: result.telegraphedCreature.x, y: result.telegraphedCreature.y },
     });
   }
 }

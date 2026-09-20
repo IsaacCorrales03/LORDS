@@ -61,9 +61,9 @@ const RANKS = {
   alfil: 3,
   torre: 4,
   reina: 5,
-  dragon: 6, // criatura domada al derrotar al Dragón; no se produce en castillo
-  fenix: 7, // criatura domada al derrotar al Fénix; no se produce en castillo
-  grifo: 8, // criatura domada al derrotar al Grifo; no se produce en castillo
+  dragon: 6, // se desbloquea al derrotar al Dragón; luego se produce en castillo
+  fenix: 7, // se desbloquea al derrotar al Fénix; luego se produce en castillo
+  grifo: 8, // se desbloquea al derrotar al Grifo; luego se produce en castillo
 };
 
 // militaryCapacity = cuántas tropas puede PRODUCIR/sostener el castillo (2/3/4
@@ -101,7 +101,30 @@ const UNIT_COSTS = {
   alfil: 50,
   torre: 85,
   reina: 125,
+  // Tropas especiales: solo se pueden producir tras derrotar a la criatura
+  // correspondiente (ver UNLOCKABLE_UNITS y creatures.js).
+  grifo: 110,
+  fenix: 140,
+  dragon: 180,
 };
+
+// Tropas que empiezan bloqueadas: se desbloquean (para el jugador que dio el
+// golpe final) al derrotar a la criatura del mismo nombre.
+const UNLOCKABLE_UNITS = ['grifo', 'fenix', 'dragon'];
+
+// Mejoras permanentes que dan las criaturas al ser derrotadas (ver
+// creatures.js). Las numéricas se apilan hasta su tope; las booleanas se
+// obtienen una sola vez.
+//   atkBonus     (Lobo)      +1 ATQ a todas tus tropas
+//   defBonus     (Golem)     -1 al daño que reciben tus tropas (mínimo 1)
+//   poisonStrike (Basilisco) tus golpes envenenan si el rival sobrevive
+//   hydraStrike  (Hidra)     1 vez por turno, UNA tropa puede atacar 2 veces
+const UPGRADE_CAPS = { atkBonus: 3, defBonus: 3 };
+const POISON_STRIKE = { damage: 2, turns: 3 };
+
+function createUpgrades() {
+  return { atkBonus: 0, defBonus: 0, poisonStrike: false, hydraStrike: false };
+}
 
 // Alcance de movimiento por tipo de ficha. La lógica real vive en
 // getReachableTiles (actions.js), que trata cada tipo con su propio patrón;
@@ -280,6 +303,7 @@ function createGameState(playerCount) {
     // Criaturas neutrales (ver creatures.js). Tope: maxCreaturesFor(maxPlayers)
     activeCreatures: [],
     creatureIdCounter: 1,
+    pendingCreatureSpawn: null, // {type, x, y} de la próxima criatura, sorteado 1 turno antes
     turnCounter: 0, // cuenta turnos individuales jugados (no rondas)
     // Clima (ver weather.js)
     activeWeather: null,
@@ -289,6 +313,7 @@ function createGameState(playerCount) {
     barriers: [], // barreras defensivas construidas en territorio propio
     barrierIdCounter: 1,
     eventQueue: [], // eventos de fondo pendientes de enviar al historial
+    hydraUsedThisTurn: false, // el 2º ataque de la Hidra se usa 1 vez por turno
   };
 }
 
@@ -308,6 +333,8 @@ function addPlayer(state, socketId, name) {
     alive: true,
     castleId: null,
     phoenixRevived: false, // el Fénix solo puede resucitar 1 vez por jugador
+    upgrades: createUpgrades(), // mejoras permanentes por criaturas derrotadas
+    unlockedUnits: [], // tropas especiales ya desbloqueadas (grifo/fenix/dragon)
   };
 
   state.players.push(player);
@@ -421,6 +448,10 @@ module.exports = {
   castleTroopCount,
   PLAYER_COLORS,
   UNIT_COSTS,
+  UNLOCKABLE_UNITS,
+  UPGRADE_CAPS,
+  POISON_STRIKE,
+  createUpgrades,
   MOVEMENT_RANGE,
   FARM_COST,
   FARM_INCOME,

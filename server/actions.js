@@ -12,6 +12,7 @@ const {
   BARRIER_HP_BY_LEVEL,
   BARRIER_COUNTER_DAMAGE_BY_LEVEL,
   FLYING_UNITS,
+  UNLOCKABLE_UNITS,
   getActiveCreatures,
   GARRISON_TROOP_LIMIT, garrisonTroopCount, castleTroopCount,
 } = require('./gameState');
@@ -21,9 +22,11 @@ const {
   findPlayer, findCastle, findUnit, isPlayersTurn,
   createUnit, removeUnit, removeUnitFromCastleGarrison, killUnit, queueEvent,
   isPetrified, tickUnitStatuses,
+  troopAtkBonus, troopDefBonus, combatMods, applyStrikePoison,
+  ensureCanAttack, markAttacked,
 } = require('./units');
 const {
-  tickCreatureSpawn, tickCreatureRegen, tickCreatureDespawn, attackCreature: attackCreatureInternal,
+  tickCreatureTelegraph, tickCreatureSpawn, tickCreatureRegen, tickCreatureDespawn, attackCreature: attackCreatureInternal,
 } = require('./creatures');
 const { tickWeather, isUnitImmobilized, isUnitDisarmed } = require('./weather');
 
@@ -318,8 +321,8 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
       log = { ...log, event: 'castleCaptured', castleId: destCastle.id, previousOwner };
     } else {
       const bonus = (CASTLE_LEVELS[destCastle.level] || {}).defenseBonus || 0;
-      const res = duel(unit, defender, bonus);
-      unit.attackedThisTurn = true;
+      const res = duel(unit, defender, bonus, combatMods(state, unit, defender));
+      markAttacked(state, unit);
       log = { ...log, dealt: res.dealt, counter: res.counter, defenderUnitId: defender.id, defenderType: defender.type, castleId: destCastle.id };
 
       if (res.defenderDied) {
@@ -337,7 +340,8 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
         return log;
       } else {
         unit.movedThisTurn = true;
-        log = { ...log, event: 'castleStandoff', defenderHp: defender.hp, attackerHp: unit.hp };
+        const poisoned = applyStrikePoison(state, unit, defender);
+        log = { ...log, event: 'castleStandoff', defenderHp: defender.hp, attackerHp: unit.hp, poisoned };
       }
     }
   } else if (destCastle && !destCastle.owner) {
@@ -358,8 +362,8 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
     log = { ...log, event: 'garrisoned', castleId: destCastle.id };
   } else if (enemyUnitAtDest) {
     // Combate en campo abierto.
-    const res = duel(unit, enemyUnitAtDest, 0);
-    unit.attackedThisTurn = true;
+    const res = duel(unit, enemyUnitAtDest, 0, combatMods(state, unit, enemyUnitAtDest));
+    markAttacked(state, unit);
     log = { ...log, dealt: res.dealt, counter: res.counter, defenderType: enemyUnitAtDest.type };
 
     if (res.defenderDied) {
@@ -393,7 +397,8 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
       return log;
     } else {
       unit.movedThisTurn = true;
-      log = { ...log, event: 'fieldCombatStandoff', defenderHp: enemyUnitAtDest.hp, attackerHp: unit.hp };
+      const poisoned = applyStrikePoison(state, unit, enemyUnitAtDest);
+      log = { ...log, event: 'fieldCombatStandoff', defenderHp: enemyUnitAtDest.hp, attackerHp: unit.hp, poisoned };
     }
   } else {
     // Movimiento libre: reclama territorio; si pisa una granja enemiga la captura.
@@ -438,7 +443,7 @@ function attackUnit(state, playerId, unitId, targetId) {
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
   if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
   if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
-  if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
+  const attackInfo = ensureCanAttack(state, unit);
 
   const target = findUnit(state, targetId);
   if (!target || target.owner === playerId) throw new Error('Objetivo inválido');
@@ -449,9 +454,10 @@ function attackUnit(state, playerId, unitId, targetId) {
     throw new Error('La ficha debe estar adyacente al objetivo');
   }
 
-  const dealt = Math.max(1, unit.atk);
+  // Mejoras: +ATQ del atacante (Lobo) y -daño por la defensa del objetivo (Golem).
+  const dealt = Math.max(1, unit.atk + troopAtkBonus(state, unit) - troopDefBonus(state, target));
   target.hp -= dealt;
-  unit.attackedThisTurn = true;
+  markAttacked(state, unit, attackInfo);
 
   const log = {
     type: 'attackUnit',
@@ -462,6 +468,7 @@ function attackUnit(state, playerId, unitId, targetId) {
     targetType: target.type,
     targetOwner: target.owner,
     dealt,
+    second: attackInfo.second, // 2º ataque de la Hidra
     to: { x: target.x, y: target.y },
   };
 
@@ -473,6 +480,7 @@ function attackUnit(state, playerId, unitId, targetId) {
   } else {
     log.event = 'attackUnitHit';
     log.targetHpRemaining = target.hp;
+    log.poisoned = applyStrikePoison(state, unit, target); // mejora del Basilisco
   }
 
   state.players.forEach((p) => checkPlayerDefeat(state, p));
@@ -521,6 +529,10 @@ function produceUnit(state, playerId, castleId, unitType) {
   if (unitType === 'rey') throw new Error('El Rey no se puede producir');
   const cost = UNIT_COSTS[unitType];
   if (cost === undefined) throw new Error('Tipo de ficha inválido');
+  // Grifo / Fénix / Dragón: solo tras derrotar a la criatura correspondiente.
+  if (UNLOCKABLE_UNITS.includes(unitType) && !(player.unlockedUnits || []).includes(unitType)) {
+    throw new Error('Todavía no desbloqueaste esa tropa: derrota a la criatura correspondiente');
+  }
   if (player.gold < cost) throw new Error('Oro insuficiente');
 
   const levelInfo = CASTLE_LEVELS[castle.level];
@@ -665,7 +677,7 @@ function attackBarrier(state, playerId, unitId, barrierId) {
   if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
   if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
   if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
-  if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
+  const attackInfo = ensureCanAttack(state, unit);
 
   const barrier = (state.barriers || []).find((b) => b.id === barrierId);
   if (!barrier || barrier.owner === playerId) throw new Error('Barrera inválida');
@@ -676,9 +688,9 @@ function attackBarrier(state, playerId, unitId, barrierId) {
     throw new Error('La ficha debe estar adyacente a la barrera');
   }
 
-  const dealt = Math.max(1, unit.atk);
+  const dealt = Math.max(1, unit.atk + troopAtkBonus(state, unit));
   barrier.hp -= dealt;
-  unit.attackedThisTurn = true;
+  markAttacked(state, unit, attackInfo);
 
   const log = {
     type: 'attackBarrier',
@@ -688,6 +700,7 @@ function attackBarrier(state, playerId, unitId, barrierId) {
     barrierId: barrier.id,
     barrierLevel: barrier.level,
     dealt,
+    second: attackInfo.second, // 2º ataque de la Hidra
     to: { x: barrier.x, y: barrier.y },
   };
 
@@ -797,6 +810,7 @@ function syncTurnOrder(state) {
 // Efectos de inicio de turno del jugador que acaba de recibir el turno.
 function beginTurn(state, wrapped) {
   state.turnCounter += 1;
+  state.hydraUsedThisTurn = false; // el 2º ataque de la Hidra se renueva cada turno
 
   // Cierre de ronda: cobrar oro -> curar tropas -> regeneración de criatura.
   if (wrapped) {
@@ -817,12 +831,13 @@ function beginTurn(state, wrapped) {
 
   const weather = tickWeather(state);
   const despawnedCreatures = tickCreatureDespawn(state);
+  const telegraphedCreature = tickCreatureTelegraph(state);
   const spawnedCreature = tickCreatureSpawn(state);
   const spawnedChest = tickChestSpawn(state);
 
   checkVictory(state);
 
-  return { spawnedCreature, despawnedCreatures, spawnedChest, weather, statusEvents };
+  return { spawnedCreature, telegraphedCreature, despawnedCreatures, spawnedChest, weather, statusEvents };
 }
 
 // --- Fin de turno ---
@@ -833,6 +848,7 @@ function endTurn(state, playerId) {
     if (u.owner === playerId) {
       u.movedThisTurn = false;
       u.attackedThisTurn = false;
+      u.didAttackThisTurn = false;
     }
   });
 

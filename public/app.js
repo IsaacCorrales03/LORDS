@@ -11,13 +11,13 @@ const UNIT_LABELS = {
 };
 // Criaturas neutrales: color de aura, recompensa y nota corta para el panel.
 const CREATURE_INFO = {
-  lobo:      { color: '#8fa3b8', reward: '10 de oro', note: 'Rápido y mordedor.' },
-  golem:     { color: '#b58a5a', reward: '14 de oro', note: 'Lento pero duro.' },
-  dragon:    { color: '#e2685a', reward: 'Se doma como tropa', note: 'Vuela sobre los abismos.' },
-  hidra:     { color: '#6fcf97', reward: '60 de oro', note: 'Regenera +2 de vida por ronda.' },
-  fenix:     { color: '#ffb347', reward: 'Se doma como tropa', note: 'Resucita una vez por jugador (10 de oro, en el castillo más cercano).' },
-  grifo:     { color: '#c9c2e8', reward: 'Se doma como tropa', note: 'Salta esquinas 2x2, sin bloqueo, igual que el Caballo.' },
-  basilisco: { color: '#7fae5c', reward: '25 de oro', note: 'Si contraataca, envenena (2 de daño por turno, 3 turnos).' },
+  lobo:      { color: '#8fa3b8', reward: '10 de oro + mejora: +1 ATQ a todas tus tropas', note: 'Rápido y mordedor.' },
+  golem:     { color: '#b58a5a', reward: '14 de oro + mejora: +1 DEF a todas tus tropas', note: 'Lento pero duro.' },
+  dragon:    { color: '#e2685a', reward: 'desbloquea producir Dragón en tus castillos', note: 'Vuela sobre los abismos.' },
+  hidra:     { color: '#6fcf97', reward: '60 de oro + mejora: 2º ataque de una tropa por turno', note: 'Regenera +2 de vida por ronda.' },
+  fenix:     { color: '#ffb347', reward: 'desbloquea producir Fénix en tus castillos', note: 'Resucita una vez por jugador (10 de oro, en el castillo más cercano).' },
+  grifo:     { color: '#c9c2e8', reward: 'desbloquea producir Grifo en tus castillos', note: 'Salta esquinas 2x2, sin bloqueo, igual que el Caballo.' },
+  basilisco: { color: '#7fae5c', reward: '25 de oro + mejora: tus golpes envenenan', note: 'Si contraataca, envenena (2 de daño por turno, 3 turnos).' },
   medusa:    { color: '#9c7fc9', reward: '35 de oro', note: 'Si contraataca, petrifica (no se puede mover ni atacar por 2 turnos).' },
 };
 const WEATHER_INFO = {
@@ -59,7 +59,44 @@ function playerNameOf(id) {
   return p ? p.name : 'Un jugador';
 }
 
-const UNIT_COSTS = { peon: 8, caballo: 25, alfil: 50, torre: 85, reina: 125 };
+const UNIT_COSTS = { peon: 8, caballo: 25, alfil: 50, torre: 85, reina: 125, grifo: 110, fenix: 140, dragon: 180 };
+// Tropas especiales: se producen en castillo solo tras derrotar a esa criatura.
+const UNLOCKABLE_UNITS = ['grifo', 'fenix', 'dragon'];
+
+// --- Mejoras por criaturas derrotadas (espejo de units.js / creatures.js) ---
+// El servidor manda player.upgrades y player.unlockedUnits; aquí solo se
+// leen para mostrar los números correctos (el cálculo real lo hace el servidor).
+function upgradesOfPlayer(state, ownerId) {
+  const p = state && ownerId ? state.players.find((pl) => pl.id === ownerId) : null;
+  return (p && p.upgrades) || null;
+}
+// ATQ / DEF efectivos: el Rey y las criaturas neutrales no reciben bonos.
+function effAtk(unit, state = currentState) {
+  if (!unit) return 0;
+  if (unit.type === 'rey') return unit.atk;
+  const up = upgradesOfPlayer(state, unit.owner);
+  return unit.atk + (up ? up.atkBonus : 0);
+}
+function effDef(unit, state = currentState) {
+  if (!unit || unit.type === 'rey') return 0;
+  const up = upgradesOfPlayer(state, unit.owner);
+  return up ? up.defBonus : 0;
+}
+// Daño que hará `attacker` a `defender` en su golpe, y lo que le devuelve el contraataque.
+function previewHit(attacker, defender) {
+  return Math.max(1, effAtk(attacker) - effDef(defender));
+}
+function previewCounter(attacker, defender) {
+  return defender && defender.atk > 0 ? Math.max(1, effAtk(defender) - effDef(attacker)) : 0;
+}
+// Mejora de la Hidra: 1 vez por turno, una tropa que ya atacó puede atacar otra vez.
+function hydraAvailableFor(unit, state = currentState) {
+  const up = upgradesOfPlayer(state, unit.owner);
+  return !!(up && up.hydraStrike && unit.didAttackThisTurn && !state.hydraUsedThisTurn);
+}
+function canStrike(unit, state) {
+  return !unit.attackedThisTurn || hydraAvailableFor(unit, state);
+}
 const CASTLE_GOLD_PER_TURN = { 1: 3, 2: 4, 3: 5 };
 const FARM_INCOME_CLIENT = 4;
 function incomeOf(state, playerId) {
@@ -82,13 +119,16 @@ const PLAYER_COLOR_HEX = {
 
 // Emblemas heráldicos: cada ficha es un pictograma plano en vez de un glifo de
 // ajedrez, dibujado con formas simples para que se lea bien a tamaño chico.
+// ESTILO ÚNICO: todos los colores son valores fijos (crema #ece3c9 para la
+// silueta, #0c1119 para los recortes). Sin var() ni currentColor dentro de los
+// atributos SVG, así ningún navegador ni modo oscuro/claro los reinterpreta.
 const UNIT_ICON_PATHS = {
-  rey: '<path d="M4 17.5 L4 10.5 L8 13.5 L12 7 L16 13.5 L20 10.5 L20 17.5 Z" fill="currentColor"/><rect x="4" y="17.5" width="16" height="2.3" fill="currentColor"/><circle cx="12" cy="7" r="1.5" fill="currentColor"/>',
-  reina: '<path d="M3 17.5 L3 11.5 L6.3 13.8 L9 8.3 L12 12.2 L15 8.3 L17.7 13.8 L21 11.5 L21 17.5 Z" fill="currentColor"/><rect x="3" y="17.5" width="18" height="2.1" fill="currentColor"/><circle cx="12" cy="8.3" r="1.25" fill="currentColor"/><circle cx="6.3" cy="13.8" r="0.9" fill="currentColor"/><circle cx="17.7" cy="13.8" r="0.9" fill="currentColor"/>',
-  torre: '<path d="M6.5 20 L6.5 9.6 L8.3 9.6 L8.3 11 L10.6 11 L10.6 9.6 L13.4 9.6 L13.4 11 L15.7 11 L15.7 9.6 L17.5 9.6 L17.5 20 Z" fill="currentColor"/><rect x="6.5" y="7.4" width="11" height="2.2" fill="currentColor"/>',
-  alfil: '<path d="M12 3.2 C9.1 6.3 7.9 9.8 7.9 12.9 C7.9 16.1 9.6 18.1 12 19.2 C14.4 18.1 16.1 16.1 16.1 12.9 C16.1 9.8 14.9 6.3 12 3.2 Z" fill="currentColor"/><rect x="11.1" y="6.6" width="1.8" height="5.2" fill="var(--panel)"/><rect x="9.1" y="8.6" width="5.8" height="1.4" fill="var(--panel)"/><circle cx="12" cy="20.6" r="1.35" fill="currentColor"/>',
-  caballo: '<path d="M8 21.7 L8 15.2 C8 13.1 7.3 12.3 6.4 11.2 C5.6 10.2 5.5 8.8 6.3 7.7 C7 6.7 8.3 6.4 9.3 7 L9.6 5.6 C9.8 4.7 10.8 4.3 11.5 4.9 L13 6.1 C14.3 5.3 16 5.5 17 6.6 L18.8 8.6 C19.4 9.3 19.2 10.3 18.4 10.7 L16.7 11.6 C17 12.5 16.7 13.5 15.9 14 L14.6 14.8 L14.6 21.7 Z" fill="currentColor"/><path d="M9.6 7 C10.6 8 11.6 8.3 12.8 8.1" fill="none" stroke="#0c1119" stroke-width="0.9" stroke-linecap="round"/><circle cx="16" cy="9" r="0.85" fill="#0c1119"/><rect x="5.6" y="20" width="10.4" height="2.1" fill="currentColor"/>',
-  peon: '<circle cx="12" cy="7.4" r="3" fill="currentColor"/><path d="M8.6 20 L9.6 12.4 H14.4 L15.4 20 Z" fill="currentColor"/><rect x="7.4" y="19" width="9.2" height="2.1" fill="currentColor"/>',
+  rey: '<rect x="10.9" y="1.4" width="2.2" height="6.6" rx="0.5"/><rect x="9" y="3.3" width="6" height="2.2" rx="0.5"/><path d="M4.6 10.2 L8.3 12.6 L12 8.6 L15.7 12.6 L19.4 10.2 L18 17.7 H6 Z"/><circle cx="12" cy="14.2" r="1.1" fill="#0c1119"/><rect x="5.7" y="17.7" width="12.6" height="1.9" rx="0.7"/><rect x="4.8" y="19.7" width="14.4" height="2" rx="1"/>',
+  reina: '<path d="M4.4 8.2 L7 14.4 L8.2 6.8 L10.6 13.8 L12 5.2 L13.4 13.8 L15.8 6.8 L17 14.4 L19.6 8.2 L18.1 17.7 H5.9 Z"/><circle cx="4.4" cy="7.4" r="1.35"/><circle cx="8.2" cy="6" r="1.35"/><circle cx="12" cy="4.3" r="1.55"/><circle cx="15.8" cy="6" r="1.35"/><circle cx="19.6" cy="7.4" r="1.35"/><rect x="5.7" y="17.7" width="12.6" height="1.9" rx="0.7"/><rect x="4.8" y="19.7" width="14.4" height="2" rx="1"/>',
+  torre: '<path d="M6 3.4 H8.5 V5.9 H10.75 V3.4 H13.25 V5.9 H15.5 V3.4 H18 V8.4 H6 Z"/><path d="M7.4 8.4 H16.6 L15.7 10.4 H8.3 Z"/><path d="M8.3 10.4 H15.7 V18.2 H8.3 Z"/><rect x="11" y="12.2" width="2" height="3.6" rx="1" fill="#0c1119"/><rect x="5.6" y="18.2" width="12.8" height="3.3" rx="0.8"/>',
+  alfil: '<circle cx="12" cy="3.7" r="1.6"/><path d="M12 5.5 C8.2 8 7.2 11.4 8.5 13.9 C9.1 15 10.3 15.6 10.5 16.5 H13.5 C13.7 15.6 14.9 15 15.5 13.9 C16.8 11.4 15.8 8 12 5.5 Z"/><path d="M13.8 7.9 L10.4 12.3" stroke="#0c1119" stroke-width="1.6" stroke-linecap="round" fill="none"/><rect x="8.3" y="16.5" width="7.4" height="2" rx="1"/><path d="M6.4 21.5 C6.4 19.9 8.3 18.9 12 18.9 C15.7 18.9 17.6 19.9 17.6 21.5 Z"/>',
+  caballo: '<path d="M6 21.4 C6.2 18 7.2 16.2 9.2 14.6 C8 14.6 6.4 14.9 4.6 14.7 C3.3 14.5 2.8 13.3 3.4 12.3 C4.4 10.6 6.4 8.6 7.8 6.3 L8 3.3 L9.9 4.8 C11.3 3.9 13.1 3.6 14.7 4.4 C18.4 6.4 19.7 11.6 18.9 16 C18.5 18.2 18.5 19.8 18.7 21.4 Z"/><circle cx="9.5" cy="8.7" r="0.95" fill="#0c1119"/><circle cx="4.6" cy="12.7" r="0.55" fill="#0c1119"/><path d="M13.4 6.4 C15.6 8.2 16.4 11.6 15.7 14.8" stroke="#0c1119" stroke-width="1" stroke-linecap="round" fill="none"/><path d="M11.4 7.4 C13 9.2 13.6 11.8 13 14.2" stroke="#0c1119" stroke-width="0.9" stroke-linecap="round" fill="none"/><rect x="5" y="19.9" width="14.4" height="2.2" rx="1"/>',
+  peon: '<circle cx="12" cy="6.9" r="3.3"/><rect x="8.5" y="10.3" width="7" height="2" rx="1"/><path d="M9.6 12.3 H14.4 L16.3 19.2 H7.7 Z"/><rect x="6" y="19" width="12" height="2.5" rx="1.2"/>',
 };
 
 // Criaturas y tropas especiales (mismo lienzo 24x24). Los "ojos" usan el color
@@ -117,13 +157,19 @@ function unitIconMarkup(type) {
   return UNIT_ICON_PATHS[type] || UNIT_ICON_PATHS.peon;
 }
 
-// Gavilla de trigo (granja): tallos que abren en abanico desde una atadura.
-const FARM_ICON = '<path d="M12 21 L12 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>'
-  + '<path d="M12 21 C9 17 8 12 6 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
-  + '<path d="M12 21 C15 17 16 12 18 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
-  + '<path d="M12 21 C10.5 16 10 10 9 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
-  + '<path d="M12 21 C13.5 16 14 10 15 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
-  + '<rect x="9.4" y="18.6" width="5.2" height="2.3" rx="0.6" fill="currentColor"/>';
+// Granja: establo con techo a dos aguas (el techo lleva el color del dueño) y
+// puerta con cruz. En el tablero va sobre un campo de surcos; FARM_ICON es la
+// versión de un solo color para el panel de jugadores.
+function farmBarnMarkup(roofColor) {
+  return '<path d="M5 13 L12 7.4 L19 13 V20.6 H5 Z" fill="#ece3c9"/>'
+    + `<path d="M2.4 12.4 L12 4 L21.6 12.4 L19.9 14.2 L12 7.3 L4.1 14.2 Z" fill="${roofColor}" stroke="#0c1119" stroke-opacity="0.55" stroke-width="0.6" stroke-linejoin="round"/>`
+    + '<rect x="9" y="13.4" width="6" height="7.2" fill="#0c1119"/>'
+    + '<path d="M9.6 14 L14.4 20.2 M14.4 14 L9.6 20.2" stroke="#ece3c9" stroke-width="0.9" fill="none"/>'
+    + '<rect x="11" y="9.7" width="2" height="1.8" fill="#0c1119"/>';
+}
+const FARM_ICON = '<path d="M2.4 12.4 L12 4 L21.6 12.4 L19.9 14.2 L12 7.3 L4.1 14.2 Z" fill="currentColor"/>'
+  + '<path d="M5 13 L12 7.4 L19 13 V20.6 H5 Z" fill="currentColor"/>'
+  + '<rect x="9.2" y="13.8" width="5.6" height="6.8" fill="#182231"/>';
 
 // Empalizada (barrera): estacas puntiagudas de distinta altura, con una viga que las une.
 const BARRIER_ICON = '<path d="M4 21 L4 9.5 L6 4.5 L8 9.5 L8 21 Z" fill="currentColor"/>'
@@ -145,6 +191,7 @@ const CASTLE_LEVEL_INFO = {
   3: { goldPerTurn: 5, militaryCapacity: 4, maxFarms: 4 },
 };
 let reachableTiles = [];
+let dimAnimatedFor = null; // unitId para el que ya se animó el oscurecido del tablero
 let nameEditTimer = null;
 const TILE_SIZE = 40;
 
@@ -501,6 +548,26 @@ myNameInput.addEventListener('blur', () => {
 
 // ================= RENDER: JUGADORES / TURNO (partida en curso) =================
 
+// Chips de mejoras permanentes (por criaturas derrotadas) y tropas desbloqueadas.
+function upgradeChipsHtml(state, p, isCurrent) {
+  const up = p.upgrades;
+  const chips = [];
+  const ico = (type, color) => `<svg viewBox="0 0 24 24" fill="${color}" color="${color}">${unitIconMarkup(type)}</svg>`;
+  if (up) {
+    if (up.atkBonus > 0) chips.push(`<span class="up-chip" title="Lobo derrotado: +${up.atkBonus} ATQ a todas sus tropas">${ico('lobo', CREATURE_INFO.lobo.color)}+${up.atkBonus} ATQ</span>`);
+    if (up.defBonus > 0) chips.push(`<span class="up-chip" title="Golem derrotado: +${up.defBonus} de defensa a todas sus tropas (reciben ${up.defBonus} menos de daño, mínimo 1)">${ico('golem', CREATURE_INFO.golem.color)}+${up.defBonus} DEF</span>`);
+    if (up.poisonStrike) chips.push(`<span class="up-chip" title="Basilisco derrotado: sus golpes envenenan al rival que sobreviva (2 de daño por turno, 3 turnos)">${ico('basilisco', CREATURE_INFO.basilisco.color)}Veneno</span>`);
+    if (up.hydraStrike) {
+      const used = isCurrent && state.hydraUsedThisTurn;
+      chips.push(`<span class="up-chip${used ? ' used' : ''}" title="Hidra derrotada: 1 vez por turno, una tropa que ya atacó puede atacar por segunda vez${used ? ' (ya usado este turno)' : ''}">${ico('hidra', CREATURE_INFO.hidra.color)}2º ataque${used ? ' ✓' : ''}</span>`);
+    }
+  }
+  (p.unlockedUnits || []).forEach((t) => {
+    chips.push(`<span class="up-chip" title="${label(t)} desbloqueado: ya lo puede producir en sus castillos (${UNIT_COSTS[t]} de oro)">${ico(t, '#ece3c9')}${label(t)}</span>`);
+  });
+  return chips.length ? `<div class="up-chips">${chips.join('')}</div>` : '';
+}
+
 function renderPlayers(state) {
   playersList.innerHTML = '';
   state.players.forEach((p) => {
@@ -521,6 +588,7 @@ function renderPlayers(state) {
         <span title="Nivel de castillo"><svg class="stat-icon" viewBox="0 0 24 24"><path d="M4 20 V10 L8 13 L12 7 L16 13 L20 10 V20 Z" fill="currentColor"/></svg> <b>${castle ? castle.level : '—'}</b></span>
         <span title="Granjas"><svg class="stat-icon" viewBox="0 0 24 24">${FARM_ICON}</svg> <b>${castle ? castle.farms : 0}</b></span>
       </div>
+      ${upgradeChipsHtml(state, p, isCurrent)}
     `;
     playersList.appendChild(card);
 
@@ -548,7 +616,14 @@ function renderWorldInfo(state) {
       ${c.despawnRound ? `<div class="wc-despawn">Se marcha en ${Math.max(0, c.despawnRound - state.round)} ronda(s)</div>` : ''}
     </div>`;
   });
-  if (creatures.length < maxCreatures) {
+  if (state.pendingCreatureSpawn) {
+    const p = state.pendingCreatureSpawn;
+    const info = creatureInfo(p.type);
+    html += `<div class="world-card telegraph-card" style="--wc:${info.color}">
+      <div class="wc-head"><svg viewBox="0 0 24 24" fill="${info.color}" color="${info.color}">${unitIconMarkup(p.type)}</svg><b>¿${label(p.type)}?</b><span class="wc-stats">se avista</span></div>
+      <div class="wc-note">Aparece en ${pos({ x: p.x, y: p.y })} el próximo turno.</div>
+    </div>`;
+  } else if (creatures.length < maxCreatures) {
     html += `<div class="world-card muted"><div class="wc-note">${state.round < 5 ? 'Las criaturas aparecen desde la ronda 5.' : `Próxima criatura en ${nextIn} turno(s) (${creatures.length}/${maxCreatures} en el tablero).`}</div></div>`;
   }
   if (w) {
@@ -771,9 +846,11 @@ function renderBoard(state) {
       rect.setAttribute('class', cls);
 
       const ownerPlayer = tile.owner ? state.players.find((p) => p.id === tile.owner) : null;
-      if (ownerPlayer && (tile.type === 'territory' || tile.type === 'farm' || tile.type === 'barrier')) {
+      if (ownerPlayer && (tile.type === 'territory' || tile.type === 'barrier')) {
         // Inline style, no atributo: así le gana a las reglas .tile.* del CSS.
-        rect.style.fill = (tile.type === 'farm' || tile.type === 'barrier') ? shade(PLAYER_COLOR_HEX[ownerPlayer.color], tile.type === 'barrier' ? 0.35 : 0.2) : PLAYER_COLOR_HEX[ownerPlayer.color];
+        // (La granja no se pinta del color del dueño: es un campo verde con su
+        // marco y su techo de ese color; ver más abajo.)
+        rect.style.fill = tile.type === 'barrier' ? shade(PLAYER_COLOR_HEX[ownerPlayer.color], 0.35) : PLAYER_COLOR_HEX[ownerPlayer.color];
       }
       if (isReachable) {
         rect.addEventListener('click', () => {
@@ -787,7 +864,7 @@ function renderBoard(state) {
             const owner = state.players.find((p) => p.id === targetUnit.owner);
             askConfirm(
               `¿Atacar a ${label(targetUnit.type)} de ${owner ? owner.name : 'otro jugador'}?`,
-              `Tu ${mover ? label(mover.type) : 'ficha'} (${mover ? mover.atk : '?'} ATQ) golpea primero. Tiene ${targetUnit.hp}/${targetUnit.maxHp} de vida; si sobrevive, contraataca por ${targetUnit.atk}.`
+              `Tu ${mover ? label(mover.type) : 'ficha'} golpea primero por ${mover ? previewHit(mover, targetUnit) : '?'} de daño. Tiene ${targetUnit.hp}/${targetUnit.maxHp} de vida; si sobrevive, contraataca por ${mover ? previewCounter(mover, targetUnit) : targetUnit.atk}.`
             ).then((ok) => { if (ok) doMove(); });
           } else {
             doMove();
@@ -868,27 +945,33 @@ function renderBoard(state) {
         }
       }
       if (tile.type === 'farm') {
-        const fcx = x * TILE_SIZE + TILE_SIZE / 2;
-        const fcy = y * TILE_SIZE + TILE_SIZE / 2;
+        const fx0 = x * TILE_SIZE;
+        const fy0 = y * TILE_SIZE;
+        const fcx = fx0 + TILE_SIZE / 2;
+        const fcy = fy0 + TILE_SIZE / 2;
+        const farmColor = ownerPlayer ? PLAYER_COLOR_HEX[ownerPlayer.color] : '#888888';
 
-        // Textura de surcos: 3 líneas curvas tenues, como tierra arada.
-        [0.32, 0.55, 0.78].forEach((f) => {
-          const fy = y * TILE_SIZE + TILE_SIZE * f;
-          const furrow = svgEl('path', {
-            d: `M${x * TILE_SIZE + 3} ${fy} Q${fcx} ${fy - 3} ${x * TILE_SIZE + TILE_SIZE - 3} ${fy}`,
-          }, 'farm-furrow');
-          boardSvg.appendChild(furrow);
+        // Campo sembrado: filas discontinuas de cultivo.
+        [0.2, 0.4, 0.6, 0.8].forEach((f) => {
+          boardSvg.appendChild(svgEl('line', {
+            x1: fx0 + 3, y1: fy0 + TILE_SIZE * f, x2: fx0 + TILE_SIZE - 3, y2: fy0 + TILE_SIZE * f,
+          }, 'farm-row'));
         });
 
-        const farmBadge = svgEl('circle', { cx: fcx, cy: fcy, r: TILE_SIZE / 2 - 8 }, 'farm-badge');
-        farmBadge.setAttribute('stroke', ownerPlayer ? PLAYER_COLOR_HEX[ownerPlayer.color] : '#888');
-        boardSvg.appendChild(farmBadge);
+        // Marco del color del dueño (así se ve de quién es la granja).
+        const farmFrame = svgEl('rect', { x: fx0 + 1.5, y: fy0 + 1.5, width: TILE_SIZE - 3, height: TILE_SIZE - 3 }, 'farm-frame');
+        farmFrame.setAttribute('stroke', farmColor);
+        boardSvg.appendChild(farmFrame);
 
-        const farmIcon = svgEl('g', { transform: `translate(${fcx - 11}, ${fcy - 11}) scale(0.92)`, fill: '#ece3c9', color: '#ece3c9' }, 'farm-icon');
-        farmIcon.innerHTML = FARM_ICON;
+        // Establo con el techo del color del dueño.
+        const barnScale = 1.08;
+        const farmIcon = svgEl('g', { transform: `translate(${fcx - 12 * barnScale}, ${fcy - 12.3 * barnScale}) scale(${barnScale})` }, 'farm-icon');
+        farmIcon.innerHTML = farmBarnMarkup(farmColor);
         boardSvg.appendChild(farmIcon);
 
-        const farmTag = svgEl('text', { x: fcx, y: y * TILE_SIZE + 9, 'text-anchor': 'middle' }, 'farm-tag');
+        // Etiqueta de ingreso arriba a la derecha.
+        boardSvg.appendChild(svgEl('rect', { x: fx0 + TILE_SIZE - 16, y: fy0 + 3, width: 13, height: 8.5, rx: 4.2 }, 'farm-pill'));
+        const farmTag = svgEl('text', { x: fx0 + TILE_SIZE - 9.5, y: fy0 + 9.3, 'text-anchor': 'middle' }, 'farm-tag');
         farmTag.textContent = `+${FARM_INCOME_CLIENT}`;
         boardSvg.appendChild(farmTag);
       }
@@ -944,6 +1027,20 @@ function renderBoard(state) {
       + '<circle cx="12" cy="13.4" r="0.9" fill="#3b2410"/>';
     boardSvg.appendChild(g);
   });
+
+  // Aviso de próxima criatura: marca la casilla telegrafiada un turno antes.
+  if (state.pendingCreatureSpawn) {
+    const p = state.pendingCreatureSpawn;
+    const info = creatureInfo(p.type);
+    const pcx = p.x * TILE_SIZE + TILE_SIZE / 2;
+    const pcy = p.y * TILE_SIZE + TILE_SIZE / 2;
+    const warnRing = svgEl('circle', { cx: pcx, cy: pcy, r: TILE_SIZE / 2 - 3 }, 'telegraph-ring');
+    warnRing.style.setProperty('--tg-color', info.color);
+    boardSvg.appendChild(warnRing);
+    const ghostIcon = svgEl('g', { transform: `translate(${pcx - 12}, ${pcy - 12})`, fill: info.color, color: info.color }, 'telegraph-icon');
+    ghostIcon.innerHTML = unitIconMarkup(p.type);
+    boardSvg.appendChild(ghostIcon);
+  }
 
   renderWeather(state);
 
@@ -1023,6 +1120,37 @@ function renderBoard(state) {
 
   renderCreature(state);
 
+  // Al elegir una ficha con movimientos posibles, el resto del tablero se
+  // oscurece: solo quedan a la vista las casillas alcanzables, las fichas
+  // enemigas, las granjas y las barreras (más la ficha elegida). Es una capa
+  // con "huecos" (evenodd) dibujada AL FINAL para cubrir también fichas,
+  // castillos y criaturas; no captura clics (pointer-events: none).
+  if (selectedUnitId && reachableTiles.length > 0) {
+    const visible = new Set(reachableSet);
+    state.units.forEach((u) => { if (u.owner !== myId || u.id === selectedUnitId) visible.add(`${u.x},${u.y}`); });
+    state.farms.forEach((f) => visible.add(`${f.x},${f.y}`));
+    (state.barriers || []).forEach((b) => visible.add(`${b.x},${b.y}`));
+
+    let d = `M0 0H${px}V${px}H0Z`;
+    visible.forEach((k) => {
+      const [vx, vy] = k.split(',').map(Number);
+      d += `M${vx * TILE_SIZE} ${vy * TILE_SIZE}h${TILE_SIZE}v${TILE_SIZE}h${-TILE_SIZE}Z`;
+    });
+    const dim = svgEl('path', { d, 'fill-rule': 'evenodd' }, 'move-dim' + (dimAnimatedFor !== selectedUnitId ? ' fresh' : ''));
+    boardSvg.appendChild(dim);
+    dimAnimatedFor = selectedUnitId;
+
+    // Marco amarillo grueso sobre cada casilla alcanzable (dentro de la casilla,
+    // para que el oscurecido de las vecinas no se lo coma).
+    reachableTiles.forEach((t) => {
+      boardSvg.appendChild(svgEl('rect', {
+        x: t.x * TILE_SIZE + 1.5, y: t.y * TILE_SIZE + 1.5, width: TILE_SIZE - 3, height: TILE_SIZE - 3,
+      }, 'reach-frame'));
+    });
+  } else {
+    dimAnimatedFor = null;
+  }
+
   // Destellos de territorio recién reclamado.
   claimedCells.forEach(({ x, y }) => spawnTileFx(x, y, 'tile-claim-fx'));
 
@@ -1030,7 +1158,7 @@ function renderBoard(state) {
   const combatEvents = new Set([
     'attackerWinsCastle', 'defenderWinsCastle', 'fieldCombatAttackerWins', 'fieldCombatDefenderWins',
     'fieldCombatStandoff', 'castleStandoff', 'castleDefenderKilled', 'weatherKill',
-    'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'creatureDefeated', 'creatureTamed',
+    'creatureSurvived', 'attackerLostToCreature', 'attackerRevived', 'creatureDefeated', 'creatureUnlocked',
     'attackUnitKilled', 'attackUnitHit', 'barrierDamaged', 'barrierDestroyed', 'attackerLostToBarrier',
   ]);
   pendingFx.forEach((log) => {
@@ -1195,7 +1323,7 @@ function canAttackCreatureWith(unit, state, c) {
   const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
   const dx = Math.abs(unit.x - c.x);
   const dy = Math.abs(unit.y - c.y);
-  return isMyTurn && unit.owner === myId && unit.type !== 'rey' && !unit.attackedThisTurn
+  return isMyTurn && unit.owner === myId && unit.type !== 'rey' && canStrike(unit, state)
     && dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
 }
 
@@ -1205,7 +1333,7 @@ async function attackCreatureWith(unitId, creatureId) {
   if (!unit || !creature) return;
   const ok = await askConfirm(
     `¿Atacar a ${label(creature.type)}?`,
-    `Tu ${label(unit.type)} (${unit.atk} ATQ) golpea primero. Tiene ${creature.hp}/${creature.maxHp} de vida; si sobrevive, contraataca por ${creature.atk}.`
+    `Tu ${label(unit.type)} golpea primero por ${previewHit(unit, creature)} de daño. Tiene ${creature.hp}/${creature.maxHp} de vida; si sobrevive, contraataca por ${previewCounter(unit, creature)}.${hydraAvailableFor(unit) && unit.attackedThisTurn ? ' (Usa el 2º ataque de la Hidra de este turno.)' : ''}`
   );
   if (!ok) return;
   socket.emit('action:attackCreature', { unitId, creatureId });
@@ -1267,7 +1395,7 @@ function canAttackUnitWith(unit, target, state) {
   if (!unit || !target) return false;
   const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
   if (!isMyTurn || unit.owner !== myId || target.owner === myId) return false;
-  if (unit.type === 'rey' || unit.attackedThisTurn) return false;
+  if (unit.type === 'rey' || !canStrike(unit, state)) return false;
   const dx = Math.abs(unit.x - target.x);
   const dy = Math.abs(unit.y - target.y);
   return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
@@ -1280,7 +1408,7 @@ async function attackUnitWith(unitId, targetId) {
   const owner = currentState.players.find((p) => p.id === target.owner);
   const ok = await askConfirm(
     `¿Atacar a ${label(target.type)} de ${owner ? owner.name : 'otro jugador'}?`,
-    `Tu ${label(unit.type)} (${unit.atk} ATQ) golpea primero. Tiene ${target.hp}/${target.maxHp} de vida; si sobrevive, contraataca por ${target.atk}.`
+    `Tu ${label(unit.type)} golpea primero por ${previewHit(unit, target)} de daño (sin contraataque a corta distancia). Tiene ${target.hp}/${target.maxHp} de vida.${hydraAvailableFor(unit) && unit.attackedThisTurn ? ' (Usa el 2º ataque de la Hidra de este turno.)' : ''}`
   );
   if (!ok) return;
   socket.emit('action:attackUnit', { unitId, targetId });
@@ -1295,7 +1423,7 @@ function canAttackBarrierWith(unit, barrier, state) {
   if (!unit || !barrier) return false;
   const isMyTurn = state.turnOrder[state.currentTurnIndex] === myId;
   if (!isMyTurn || unit.owner !== myId || barrier.owner === myId) return false;
-  if (unit.type === 'rey' || unit.attackedThisTurn) return false;
+  if (unit.type === 'rey' || !canStrike(unit, state)) return false;
   const dx = Math.abs(unit.x - barrier.x);
   const dy = Math.abs(unit.y - barrier.y);
   return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
@@ -1309,7 +1437,7 @@ async function attackBarrierWith(unitId, barrierId) {
   const counter = BARRIER_COUNTER_DAMAGE_BY_LEVEL[barrier.level] || 0;
   const ok = await askConfirm(
     `¿Atacar la barrera (Nv ${barrier.level}) de ${owner ? owner.name : 'otro jugador'}?`,
-    `Tu ${label(unit.type)} (${unit.atk} ATQ) le pega. Tiene ${barrier.hp}/${barrier.maxHp} de vida${counter > 0 ? ` y contraataca por ${counter}` : ' (no contraataca)'}.`
+    `Tu ${label(unit.type)} le pega por ${effAtk(unit)}. Tiene ${barrier.hp}/${barrier.maxHp} de vida${counter > 0 ? ` y contraataca por ${counter}` : ' (no contraataca)'}.${hydraAvailableFor(unit) && unit.attackedThisTurn ? ' (Usa el 2º ataque de la Hidra de este turno.)' : ''}`
   );
   if (!ok) return;
   socket.emit('action:attackBarrier', { unitId, barrierId });
@@ -1463,7 +1591,8 @@ function renderSelection() {
           <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">${owner ? escapeHtml(owner.name) : 'Desconocido'}</b></div>
           <div style="color:var(--ink-dim); font-size:12px;">Ficha: <b style="color:var(--ink);">${label(target.type)}</b></div>
           <div class="stat-chips" style="margin-top:6px;">
-            <span class="chip chip-atk" title="Ataque"><b>${target.atk}</b> ATQ</span>
+            <span class="chip chip-atk" title="Ataque"><b>${effAtk(target)}</b> ATQ</span>
+            ${effDef(target) > 0 ? `<span class="chip chip-def" title="Defensa: recibe ${effDef(target)} menos de daño (mínimo 1)"><b>+${effDef(target)}</b> DEF</span>` : ''}
             <span class="chip chip-hp" title="Vida"><b>${target.hp}</b>/${target.maxHp} VIDA</span>
           </div>
         `;
@@ -1497,7 +1626,8 @@ function renderSelection() {
       <span>${UNIT_LABELS[unit.type]}</span>
     </div>
     <div class="stat-chips">
-      <span class="chip chip-atk" title="Ataque"><b>${unit.atk}</b> ATQ</span>
+      <span class="chip chip-atk" title="${effAtk(unit) !== unit.atk ? `Ataque base ${unit.atk} + ${effAtk(unit) - unit.atk} por mejora` : 'Ataque'}"><b>${effAtk(unit)}</b> ATQ${effAtk(unit) !== unit.atk ? ` <small>(+${effAtk(unit) - unit.atk})</small>` : ''}</span>
+      ${effDef(unit) > 0 ? `<span class="chip chip-def" title="Defensa: recibe ${effDef(unit)} menos de daño (mínimo 1)"><b>+${effDef(unit)}</b> DEF</span>` : ''}
       <span class="chip chip-hp" title="Vida"><b>${unit.hp}</b>/${unit.maxHp} VIDA</span>
     </div>
     <div class="sel-hpbar"><i style="width:${Math.round((unit.hp / unit.maxHp) * 100)}%; background:${hpColor(unit.hp / unit.maxHp)}"></i></div>
@@ -1506,9 +1636,9 @@ function renderSelection() {
       ${unit.type === 'fenix' ? `<br><span class="phoenix-note">${(currentState.players.find((p) => p.id === unit.owner) || {}).phoenixRevived ? 'Resurrección ya usada' : 'Resurrección disponible (10 de oro, castillo más cercano)'}</span>` : ''}
       ${FLYING_TYPES.has(unit.type) ? '<br>Vuela sobre los abismos' : ''}
     </div>
-    ${creaturesOf(currentState).filter((c) => canAttackCreatureWith(unit, currentState, c)).map((c) => `<button class="action-btn attack-btn" data-creature="${c.id}" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[c.type] || c.type}</span><span class="cost">-${unit.atk} vida</span></button>`).join('')}
-    ${(currentState.barriers || []).filter((b) => canAttackBarrierWith(unit, b, currentState)).map((b) => `<button class="action-btn attack-btn" data-barrier="${b.id}" style="margin-top:8px; width:100%;"><span>Atacar barrera (Nv ${b.level})</span><span class="cost">-${unit.atk} vida</span></button>`).join('')}
-    ${unit.attackedThisTurn && creaturesOf(currentState).length > 0 && unit.type !== 'rey' ? '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>' : ''}
+    ${creaturesOf(currentState).filter((c) => canAttackCreatureWith(unit, currentState, c)).map((c) => `<button class="action-btn attack-btn" data-creature="${c.id}" style="margin-top:8px; width:100%;"><span>Atacar a ${UNIT_LABELS[c.type] || c.type}${unit.attackedThisTurn ? ' (2º ataque)' : ''}</span><span class="cost">-${previewHit(unit, c)} vida</span></button>`).join('')}
+    ${(currentState.barriers || []).filter((b) => canAttackBarrierWith(unit, b, currentState)).map((b) => `<button class="action-btn attack-btn" data-barrier="${b.id}" style="margin-top:8px; width:100%;"><span>Atacar barrera (Nv ${b.level})${unit.attackedThisTurn ? ' (2º ataque)' : ''}</span><span class="cost">-${effAtk(unit)} vida</span></button>`).join('')}
+    ${unit.didAttackThisTurn && unit.type !== 'rey' ? (hydraAvailableFor(unit) ? '<div class="hydra-note">Ya atacó, pero el 2º ataque de la Hidra está disponible: puede atacar otra vez.</div>' : '<div style="color:var(--ink-dim); font-size:11px; margin-top:6px;">Ya atacó este turno</div>') : ''}
   `;
   selectionBox.querySelectorAll('[data-creature]').forEach((b) => {
     b.onclick = () => attackCreatureWith(unit.id, Number(b.dataset.creature));
@@ -1574,14 +1704,17 @@ function renderSelection() {
 
 function renderProduceGrid(castle, myPlayer) {
   produceGrid.innerHTML = '';
+  const unlocked = (myPlayer && myPlayer.unlockedUnits) || [];
   Object.keys(UNIT_COSTS).forEach((type) => {
     const cost = UNIT_COSTS[type];
+    const locked = UNLOCKABLE_UNITS.includes(type) && !unlocked.includes(type);
     const btn = document.createElement('button');
-    btn.className = 'action-btn';
-    btn.innerHTML = `<span style="display:flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" fill="var(--gold)" color="var(--gold)">${unitIconMarkup(type)}</svg>${UNIT_LABELS[type]}</span><span class="cost">${cost}</span>`;
+    btn.className = 'action-btn' + (locked ? ' locked' : '');
+    btn.innerHTML = `<span style="display:flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" fill="${locked ? '#5a6b7d' : 'var(--gold)'}" color="${locked ? '#5a6b7d' : 'var(--gold)'}">${unitIconMarkup(type)}</svg>${UNIT_LABELS[type]}</span><span class="cost">${locked ? 'Bloq.' : cost}</span>`;
     const full = castleTroopStats(castle).produced >= CASTLE_LEVEL_INFO[castle.level].militaryCapacity;
-    btn.disabled = !myPlayer || myPlayer.gold < cost || full;
-    if (full) btn.title = 'Máximo de tropas del nivel alcanzado: mejora el castillo';
+    btn.disabled = locked || !myPlayer || myPlayer.gold < cost || full;
+    if (locked) btn.title = `Derrota a un ${UNIT_LABELS[type]} salvaje para desbloquearlo (${cost} de oro)`;
+    else if (full) btn.title = 'Máximo de tropas del nivel alcanzado: mejora el castillo';
     btn.addEventListener('click', () => {
       socket.emit('action:produce', { castleId: castle.id, unitType: type });
     });
@@ -1651,7 +1784,7 @@ const COMBAT_EVENTS = new Set([
 ]);
 const CAPTURE_EVENTS = new Set([
   'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
-  'creatureDefeated', 'creatureTamed', 'phoenixRevived',
+  'creatureDefeated', 'creatureUnlocked', 'phoenixRevived',
 ]);
 const WORLD_EVENTS = new Set(['chestSpawned', 'chestCollected', 'creatureDespawned', 'weatherHeal', 'weatherGold', 'turnTimeout', 'creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
 
@@ -1672,7 +1805,26 @@ function dmgText(log) {
 }
 function label(t) { return UNIT_LABELS[t] || t; }
 
+// Texto de la mejora ganada al derrotar a una criatura (log.upgrade = { key, value }).
+function upgradeGainText(up) {
+  switch (up.key) {
+    case 'atkBonus': return `+${up.value} ATQ en todas sus tropas`;
+    case 'defBonus': return `+${up.value} DEF en todas sus tropas`;
+    case 'poisonStrike': return 'sus golpes ahora envenenan';
+    case 'hydraStrike': return '1 tropa por turno puede atacar 2 veces';
+    default: return 'nueva mejora';
+  }
+}
+
+// Envuelve el texto base con avisos extra: veneno aplicado y 2º ataque de la Hidra.
 function describeLog(log) {
+  let text = describeLogBase(log);
+  if (log.poisoned) text += ' · ¡envenenado!';
+  if (log.second) text += ' · 2º ataque (Hidra)';
+  return text;
+}
+
+function describeLogBase(log) {
   const from = pos(log.from);
   const to = pos(log.to);
   switch (log.event) {
@@ -1690,11 +1842,12 @@ function describeLog(log) {
     case 'moved': return `Movimiento ${from} → ${to}`;
 
     case 'creatureSpawned': return `Aparece ${label(log.creature.type)} en ${to}`;
+    case 'creatureTelegraph': return `Se avista ${label(log.creature.type)}: aparecerá en ${to} el próximo turno`;
     case 'creatureSurvived': return `${label(log.unitType)} golpea a ${label(log.creatureType)}${dmgText(log)}; le quedan ${log.creatureHpRemaining} de vida`;
     case 'attackerLostToCreature': return `${label(log.unitType)} cae ante ${label(log.creatureType)}${dmgText(log)}`;
     case 'attackerRevived': return `${label(log.unitType)} cae ante ${label(log.creatureType)}, ¡pero el Fénix resucita!`;
-    case 'creatureDefeated': return `${label(log.creatureType)} derrotado: +${log.goldReward} de oro`;
-    case 'creatureTamed': return `¡${label(log.creatureType)} domado! Se une como tropa en ${to}`;
+    case 'creatureDefeated': return `${label(log.creatureType)} derrotado: +${log.goldReward} de oro${log.upgrade ? ` · ${playerNameOf(log.playerId)} obtiene una mejora: ${upgradeGainText(log.upgrade)}` : ''}`;
+    case 'creatureUnlocked': return `¡${label(log.creatureType)} derrotado! ${playerNameOf(log.playerId)} desbloquea al ${label(log.unlockedType)}: ya puede producirlo en sus castillos`;
 
     case 'weatherSpawned': return `${weatherInfo(log.weather.type).label} sobre ${Array.isArray(log.weather.cells) ? log.weather.cells.length : 9} casillas`;
     case 'weatherEnded': return `Se disipa: ${weatherInfo(log.weather.type).label}`;
@@ -1759,6 +1912,7 @@ const RULES_SLIDES = [
     <li><b>Mejorar</b> el castillo: nivel 2 cuesta 15, nivel 3 cuesta 50. Sube el oro, las granjas y las tropas máximas; el nivel 3 además reduce 1 el daño que recibe.</li></ul>` },
   { title: 'Tropas', body: `<p>Selecciona tu castillo para comprar fichas:</p>
     <div class="rules-grid"><span>Peón</span><b>8</b><span>Caballo</span><b>25</b><span>Alfil</span><b>50</b><span>Torre</span><b>85</b><span>Reina</span><b>125</b></div>
+    <p><b>Especiales</b> (solo tras derrotar a esa criatura): Grifo <b>110</b>, Fénix <b>140</b>, Dragón <b>180</b>.</p>
     <ul><li>Un castillo sostiene hasta <b>2 / 3 / 4</b> tropas según su nivel.</li>
     <li>Sobre su casilla caben <b>solo 2</b>; las demás aparecen en una casilla libre alrededor.</li>
     <li>Una ficha recién producida no actúa ese turno.</li></ul>` },
@@ -1777,8 +1931,15 @@ const RULES_SLIDES = [
     <li>Entrar a una <b>granja</b> enemiga la captura.</li>
     <li>Tu territorio (tu color) crece por donde pasas.</li></ul>` },
   { title: 'Cofres y criaturas', body: `<ul><li><b>Cofres del tesoro:</b> aparecen al azar en cualquier casilla libre (poco frecuentes). Termina un movimiento encima para abrirlos y ganar <b>5 a 25 de oro</b>.</li>
-    <li><b>Criaturas</b> desde la ronda 5: derrotarlas da oro. El <b>Dragón, el Fénix y el Grifo</b> no mueren: se domestican y pasan a tu bando.</li>
+    <li><b>Criaturas</b> desde la ronda 5: derrotarlas da oro y una <b>mejora permanente</b> (ver el paso siguiente).</li>
     <li>Se marchan solas a las 10 rondas. Basilisco y Medusa envenenan o petrifican al contraatacar.</li></ul>` },
+  { title: 'Mejoras de criaturas', body: `<p>Las gana <b>quien da el golpe final</b> y valen para siempre:</p>
+    <ul><li><b>Lobo:</b> +1 ATQ a todas tus tropas (hasta +3).</li>
+    <li><b>Golem:</b> +1 de defensa a todas tus tropas: reciben 1 menos de daño, mínimo 1 (hasta +3).</li>
+    <li><b>Basilisco:</b> tus golpes envenenan al rival que sobreviva (2 de daño por turno, 3 turnos).</li>
+    <li><b>Hidra:</b> una vez por turno, <b>una sola tropa</b> que ya atacó puede atacar por segunda vez.</li>
+    <li><b>Dragón, Grifo y Fénix:</b> desbloquean producirlos en tus castillos.</li></ul>
+    <p class="rules-tip">El Rey no recibe bonos. Tus mejoras se ven en tu tarjeta de jugador.</p>` },
   { title: 'Clima', body: `<p>Desde la ronda 3 cae una tormenta sobre <b>9 casillas</b> durante 2 turnos:</p>
     <ul><li><b>Dañan (−1 vida):</b> eléctrica, nieve, arena, ácido y niebla.</li>
     <li><b>Terremoto:</b> inmoviliza a quien esté dentro.</li>

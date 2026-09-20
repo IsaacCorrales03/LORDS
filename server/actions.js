@@ -161,7 +161,29 @@ function getGriffinMoves(state, unit) {
     });
 }
 
+// ¿Entrar a (x, y) sería un ataque? (ficha rival o castillo rival con defensores)
+function isHostileTile(state, unit, x, y) {
+  if (state.units.some((u) => u.x === x && u.y === y && u.owner !== unit.owner)) return true;
+  const tile = tileAt(state, x, y);
+  if (tile && tile.type === 'castle') {
+    const c = findCastle(state, tile.occupantCastleId);
+    if (c && c.owner && c.owner !== unit.owner && c.garrison.length > 0) return true;
+  }
+  return false;
+}
+
+// Casillas alcanzables. Regla "o atacas o te mueves contra un rival": una
+// ficha que ya atacó este turno no puede entrar a una casilla hostil (salvo
+// el 2º ataque de la Hidra, ver ensureCanAttack).
 function getReachableTiles(state, unit) {
+  const tiles = getReachableTilesRaw(state, unit);
+  if (!unit.attackedThisTurn) return tiles;
+  let canAgain = true;
+  try { ensureCanAttack(state, unit); } catch (e) { canAgain = false; }
+  return canAgain ? tiles : tiles.filter((t) => !isHostileTile(state, unit, t.x, t.y));
+}
+
+function getReachableTilesRaw(state, unit) {
   if (unit.type === 'rey') return []; // el Rey nunca puede moverse
   if (isPetrified(unit)) return []; // petrificado: no puede moverse
   if (isUnitImmobilized(state, unit)) return []; // terremoto: no puede moverse
@@ -279,6 +301,7 @@ function occupyCastle(state, unit, castle, playerId, fromX, fromY) {
 // granjas, combate (vida/ataque) al entrar en castillo/casilla enemiga, y
 // conquista.
 function moveUnitInner(state, playerId, unitId, toX, toY) {
+  let markAttackPermission = null;
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
   const unit = findUnit(state, unitId);
   if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
@@ -293,6 +316,13 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
 
   const fromX = unit.x;
   const fromY = unit.y;
+
+  // Un ataque por turno: si ya atacó (adyacente o moviéndose), no puede caer
+  // sobre una casilla hostil. Se valida ANTES de tocar la guarnición.
+  if (isHostileTile(state, unit, toX, toY)) {
+    if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
+    markAttackPermission = ensureCanAttack(state, unit);
+  }
 
   // La ficha deja la casilla donde estaba: si estaba guarnecida en un
   // castillo, se libera ese cupo (antes solo se liberaba al morir).
@@ -322,7 +352,7 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
     } else {
       const bonus = (CASTLE_LEVELS[destCastle.level] || {}).defenseBonus || 0;
       const res = duel(unit, defender, bonus, combatMods(state, unit, defender));
-      markAttacked(state, unit);
+      markAttacked(state, unit, markAttackPermission);
       log = { ...log, dealt: res.dealt, counter: res.counter, defenderUnitId: defender.id, defenderType: defender.type, castleId: destCastle.id };
 
       if (res.defenderDied) {
@@ -363,7 +393,7 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
   } else if (enemyUnitAtDest) {
     // Combate en campo abierto.
     const res = duel(unit, enemyUnitAtDest, 0, combatMods(state, unit, enemyUnitAtDest));
-    markAttacked(state, unit);
+    markAttacked(state, unit, markAttackPermission);
     log = { ...log, dealt: res.dealt, counter: res.counter, defenderType: enemyUnitAtDest.type };
 
     if (res.defenderDied) {

@@ -1380,3 +1380,26 @@ button:disabled {
 /* Tropas especiales aún bloqueadas en el panel de producción */
 .action-btn.locked { opacity: 0.55; }
 .action-btn.locked .cost { color: var(--ink-dim); font-weight: 600; font-size: 11px; }
+
+
+/* Marco rojo: objetivo adyacente que la ficha elegida puede atacar */
+.attack-frame {
+  fill: rgba(226, 104, 90, 0.16);
+  stroke: #ff4d3d;
+  stroke-width: 3;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(255, 77, 61, 0.9));
+  animation: attack-frame-pulse 0.9s ease-in-out infinite;
+}
+@keyframes attack-frame-pulse { 0%, 100% { stroke-opacity: 0.75; } 50% { stroke-opacity: 1; } }
+
+/* Barras de desplazamiento a juego con el tema (paneles y tablero) */
+* { scrollbar-width: thin; scrollbar-color: #3a4d66 transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #2c3b50; border-radius: 6px;
+  border: 2px solid var(--panel); background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }

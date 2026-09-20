@@ -375,6 +375,14 @@ socket.on('state:update', (state) => {
   }
   prevRound = state.round;
 
+  // Si hay una ficha elegida, se recalculan sus casillas (tras atacar o mover
+  // cambian: una ficha que ya atacó no puede caer sobre un rival).
+  if (state.phase === 'playing' && selectedUnitId && state.turnOrder[state.currentTurnIndex] === myId) {
+    const su = state.units.find((u) => u.id === selectedUnitId);
+    if (su && su.type !== 'rey' && !su.movedThisTurn) socket.emit('action:getReachable', { unitId: selectedUnitId });
+    else reachableTiles = [];
+  }
+
   renderPlayers(state);
   renderWorldInfo(state);
   renderTurnInfo(state);
@@ -929,7 +937,16 @@ function renderBoard(state) {
             boardSvg.appendChild(svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 1 }, 'castle-selected-ring'));
           }
           const chit = svgEl('circle', { cx, cy, r: TILE_SIZE / 2 - 3 }, 'unit-hit castle-hit mine');
-          chit.addEventListener('click', () => selectCastle(castle.id));
+          chit.addEventListener('click', () => {
+            // Con una ficha elegida que puede llegar a este castillo, el clic la
+            // MUEVE ahí (guarnecer) en vez de abrir el panel del castillo.
+            if (selectedUnitId && reachableSet.has(key)) {
+              reachableTiles = [];
+              socket.emit('action:move', { unitId: selectedUnitId, x, y });
+            } else {
+              selectCastle(castle.id);
+            }
+          });
           boardSvg.appendChild(chit);
         }
 
@@ -1125,8 +1142,20 @@ function renderBoard(state) {
   // enemigas, las granjas y las barreras (más la ficha elegida). Es una capa
   // con "huecos" (evenodd) dibujada AL FINAL para cubrir también fichas,
   // castillos y criaturas; no captura clics (pointer-events: none).
+  // Objetivos adyacentes que la ficha elegida puede atacar ahora mismo (antes
+  // o después de moverse): fichas rivales, criaturas y barreras. Se marcan en
+  // rojo y quedan visibles aunque el resto se oscurezca.
+  const attackSel = selectedUnitId ? state.units.find((u) => u.id === selectedUnitId) : null;
+  const attackTargets = [];
+  if (attackSel && attackSel.owner === myId) {
+    state.units.forEach((u) => { if (canAttackUnitWith(attackSel, u, state)) attackTargets.push(u); });
+    creaturesOf(state).forEach((c) => { if (canAttackCreatureWith(attackSel, state, c)) attackTargets.push(c); });
+    (state.barriers || []).forEach((b) => { if (canAttackBarrierWith(attackSel, b, state)) attackTargets.push(b); });
+  }
+
   if (selectedUnitId && reachableTiles.length > 0) {
     const visible = new Set(reachableSet);
+    attackTargets.forEach((t) => visible.add(`${t.x},${t.y}`));
     state.units.forEach((u) => { if (u.owner !== myId || u.id === selectedUnitId) visible.add(`${u.x},${u.y}`); });
     state.farms.forEach((f) => visible.add(`${f.x},${f.y}`));
     (state.barriers || []).forEach((b) => visible.add(`${b.x},${b.y}`));
@@ -1150,6 +1179,11 @@ function renderBoard(state) {
   } else {
     dimAnimatedFor = null;
   }
+  attackTargets.forEach((t) => {
+    boardSvg.appendChild(svgEl('rect', {
+      x: t.x * TILE_SIZE + 1.5, y: t.y * TILE_SIZE + 1.5, width: TILE_SIZE - 3, height: TILE_SIZE - 3,
+    }, 'attack-frame'));
+  });
 
   // Destellos de territorio recién reclamado.
   claimedCells.forEach(({ x, y }) => spawnTileFx(x, y, 'tile-claim-fx'));

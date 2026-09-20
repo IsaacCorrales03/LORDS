@@ -30,6 +30,7 @@ function pickReward() {
 
 function isTileFreeForChest(state, x, y) {
   if (state.tiles[y][x].type === 'farm') return false;
+  if (state.tiles[y][x].type === 'barrier') return false;
   if (state.units.some((u) => u.x === x && u.y === y)) return false;
   if (getActiveCreatures(state).some((c) => c.x === x && c.y === y)) return false;
   if ((state.chests || []).some((c) => c.x === x && c.y === y)) return false;

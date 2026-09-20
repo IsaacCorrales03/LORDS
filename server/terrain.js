@@ -9,6 +9,7 @@ function isAccessibleTile(state, x, y) {
   if (!tile) return false;
   if (tile.type === 'castle') return false;
   if (tile.type === 'inaccessible') return false;
+  if (tile.type === 'barrier') return false;
   return true;
 }
 

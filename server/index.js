@@ -60,6 +60,7 @@ function serializeState(s) {
     chests: s.chests || [],
     turnCounter: s.turnCounter,
     turnDeadline: s.turnDeadline || null,
+    startedAt: s.startedAt || null,
     serverNow: Date.now(),
   };
 }

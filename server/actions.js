@@ -16,7 +16,7 @@ const { duel } = require('./combat');
 const { tickChestSpawn, collectChestAt } = require('./chests');
 const {
   findPlayer, findCastle, findUnit, isPlayersTurn,
-  createUnit, removeUnit, killUnit, queueEvent,
+  createUnit, removeUnit, removeUnitFromCastleGarrison, killUnit, queueEvent,
   isPetrified, tickUnitStatuses,
 } = require('./units');
 const {
@@ -278,6 +278,11 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
 
   const fromX = unit.x;
   const fromY = unit.y;
+
+  // La ficha deja la casilla donde estaba: si estaba guarnecida en un
+  // castillo, se libera ese cupo (antes solo se liberaba al morir).
+  removeUnitFromCastleGarrison(state, unit.id);
+
   const destTile = tileAt(state, toX, toY);
   if (!destTile) throw new Error('Casilla fuera del tablero');
 
@@ -352,6 +357,23 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
       unit.y = toY;
       unit.movedThisTurn = true;
       claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, JUMPING_UNIT_TYPES.has(unit.type));
+
+      // La casilla queda conquistada; si era granja enemiga, se captura en
+      // vez de quedar sin dueño (antes dependía solo de claimTerritoryAlongPath,
+      // que no toca casillas tipo 'farm').
+      if (destTile.type === 'farm' && destTile.owner && destTile.owner !== playerId) {
+        const farm = state.farms.find((f) => f.x === toX && f.y === toY);
+        if (farm) {
+          const originCastle = findCastle(state, farm.castleId);
+          if (originCastle) originCastle.farms = Math.max(0, originCastle.farms - 1);
+          farm.owner = playerId;
+          farm.castleId = null;
+        }
+      } else if (destTile.type !== 'castle') {
+        destTile.type = 'territory';
+      }
+      destTile.owner = playerId;
+
       log = { ...log, event: 'fieldCombatAttackerWins', attackerHp: unit.hp };
     } else if (res.attackerDied) {
       const kill = killUnit(state, unit);

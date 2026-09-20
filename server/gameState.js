@@ -395,6 +395,7 @@ function startGame(state) {
 
   state.phase = 'playing';
   state.round = 1;
+  state.startedAt = Date.now();
 }
 
 module.exports = {

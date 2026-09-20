@@ -58,9 +58,11 @@ function serializeState(s) {
     activeCreatures: getActiveCreatures(s),
     activeWeather: s.activeWeather,
     chests: s.chests || [],
+    barriers: s.barriers || [],
     turnCounter: s.turnCounter,
     turnDeadline: s.turnDeadline || null,
     startedAt: s.startedAt || null,
+    postGameChoices: s.postGameChoices || {},
     serverNow: Date.now(),
   };
 }
@@ -107,6 +109,34 @@ function onTurnTimeout(token, playerId) {
 function broadcastState() {
   syncTurnTimer();
   io.emit('state:update', serializeState(state));
+}
+
+// --- Coordinación de fin de partida ---
+// Al terminar la partida, cada jugador elige "jugar de nuevo" o "volver al
+// lobby". Ninguna de las dos acciones resetea nada por sí sola: hasta que
+// TODOS los jugadores conectados hayan elegido una de las dos, el estado
+// sigue en pie (así los demás pueden seguir viendo el tablero final). El
+// último en decidir dispara el reset y todos vuelven a la pantalla de
+// elegir cantidad de jugadores, sin importar cuál de las dos botoneras usó.
+function registerPostGameChoice(socket, action) {
+  if (!state || state.phase !== 'finished') return;
+  if (!state.postGameChoices) state.postGameChoices = {};
+  state.postGameChoices[socket.id] = action;
+  broadcastState();
+  maybeResetAfterGame();
+}
+
+function maybeResetAfterGame() {
+  if (!state || state.phase !== 'finished') return;
+  if (state.players.length === 0) return;
+  const allDecided = state.players.every((p) => {
+    const sock = io.sockets.sockets.get(p.id);
+    return !sock || (state.postGameChoices && state.postGameChoices[p.id]);
+  });
+  if (allDecided) {
+    state = null;
+    broadcastState();
+  }
 }
 
 // Envía al historial los eventos de fondo (resurrección de Fénix, muertes por
@@ -292,6 +322,36 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('action:getBuildableBarrierTiles', () => {
+    if (!state) return;
+    const tiles = actions.getBuildableBarrierTiles(state, socket.id);
+    socket.emit('action:buildableBarrierTiles', { tiles });
+  });
+
+  socket.on('action:buildBarrier', ({ castleId, x, y }) => {
+    if (!state) return;
+    try {
+      actions.buildBarrier(state, socket.id, castleId, x, y);
+      broadcastState();
+      io.emit('action:log', { type: 'buildBarrier', playerId: socket.id, castleId });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
+  socket.on('action:attackBarrier', ({ unitId, barrierId }) => {
+    if (!state) return;
+    try {
+      const log = actions.attackBarrier(state, socket.id, unitId, barrierId);
+      broadcastState();
+      io.emit('action:log', log);
+      flushEvents();
+      if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
   socket.on('action:upgradeCastle', ({ castleId }) => {
     if (!state) return;
     try {
@@ -347,6 +407,9 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('game:playAgain', () => registerPostGameChoice(socket, 'again'));
+  socket.on('game:backToLobby', () => registerPostGameChoice(socket, 'lobby'));
+
   socket.on('action:attackCreature', ({ unitId, creatureId }) => {
     if (!state) return;
     try {
@@ -387,6 +450,14 @@ io.on('connection', (socket) => {
         if (!state.leaderId) state = null;
       }
       broadcastState();
+    }
+
+    if (!state) return;
+
+    if (state.phase === 'finished') {
+      // Ya no cuenta como "indeciso": si era el último que faltaba, esto
+      // dispara el reset para los que quedan.
+      maybeResetAfterGame();
     }
 
     if (!state) return;

@@ -8,6 +8,9 @@ const {
   MOVEMENT_RANGE,
   FARM_COST,
   FARM_INCOME,
+  BARRIER_COST,
+  BARRIER_HP_BY_LEVEL,
+  BARRIER_COUNTER_DAMAGE_BY_LEVEL,
   FLYING_UNITS,
   getActiveCreatures,
   GARRISON_TROOP_LIMIT, garrisonTroopCount, castleTroopCount,
@@ -35,6 +38,10 @@ function unitAt(state, x, y) {
 
 function creatureAt(state, x, y) {
   return getActiveCreatures(state).find((c) => c.x === x && c.y === y) || null;
+}
+
+function barrierAt(state, x, y) {
+  return (state.barriers || []).find((b) => b.x === x && b.y === y) || null;
 }
 
 // --- Fase 1: obtener oro ---
@@ -78,6 +85,10 @@ function getLineMoves(state, unit, range, dirs) {
         if (flying) continue; // sobrevuela el hueco pero no puede aterrizar
         break;
       }
+      if (tile.type === 'barrier') {
+        if (flying) continue; // sobrevuela la barrera pero no puede aterrizar
+        break; // bloquea el paso: hay que destruirla para avanzar
+      }
       if (creatureAt(state, x, y)) break; // a las criaturas se las ataca, no se pisan
       const other = unitAt(state, x, y);
       if (other && other.owner === unit.owner && tile.type !== 'castle') break;
@@ -102,6 +113,7 @@ function getUnblockedLineMoves(state, unit, dirs) {
       const tile = tileAt(state, x, y);
       if (!tile) break; // fuera del tablero: no hay más casillas en esta dirección
       if (tile.type === 'inaccessible') continue; // sobrevuela, no puede aterrizar
+      if (tile.type === 'barrier') continue; // sobrevuela la barrera, no puede aterrizar
       if (creatureAt(state, x, y)) continue; // sobrevuela, se ataca aparte
       const other = unitAt(state, x, y);
       if (other && other.owner === unit.owner && tile.type !== 'castle') continue; // sobrevuela
@@ -121,7 +133,7 @@ function getKnightMoves(state, unit) {
     .map(([dx, dy]) => ({ x: unit.x + dx, y: unit.y + dy }))
     .filter((p) => {
       const tile = tileAt(state, p.x, p.y);
-      if (!tile || tile.type === 'inaccessible') return false;
+      if (!tile || tile.type === 'inaccessible' || tile.type === 'barrier') return false;
       if (creatureAt(state, p.x, p.y)) return false;
       const other = unitAt(state, p.x, p.y);
       if (other && other.owner === unit.owner && tile.type !== 'castle') return false;
@@ -138,7 +150,7 @@ function getGriffinMoves(state, unit) {
     .map(([dx, dy]) => ({ x: unit.x + dx, y: unit.y + dy }))
     .filter((p) => {
       const tile = tileAt(state, p.x, p.y);
-      if (!tile || tile.type === 'inaccessible') return false;
+      if (!tile || tile.type === 'inaccessible' || tile.type === 'barrier') return false;
       if (creatureAt(state, p.x, p.y)) return false;
       const other = unitAt(state, p.x, p.y);
       if (other && other.owner === unit.owner && tile.type !== 'castle') return false;
@@ -580,6 +592,136 @@ function buildFarm(state, playerId, castleId, x, y) {
   return farm;
 }
 
+// --- Construcción de barreras ---
+// Igual patrón que las granjas: solo en territorio propio ya reclamado, y
+// no debajo de una ficha (propia o ajena).
+function getBuildableBarrierTiles(state, playerId) {
+  const tiles = [];
+  for (let y = 0; y < state.boardSize; y++) {
+    for (let x = 0; x < state.boardSize; x++) {
+      const tile = state.tiles[y][x];
+      if (tile.type === 'territory' && tile.owner === playerId && !unitAt(state, x, y)) {
+        tiles.push({ x, y });
+      }
+    }
+  }
+  return tiles;
+}
+
+function buildBarrier(state, playerId, castleId, x, y) {
+  if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
+  const player = findPlayer(state, playerId);
+  const castle = findCastle(state, castleId);
+  if (!castle || castle.owner !== playerId) throw new Error('Castillo inválido');
+  if (player.gold < BARRIER_COST) throw new Error('Oro insuficiente');
+
+  const tile = tileAt(state, x, y);
+  if (!tile) throw new Error('Casilla fuera del tablero');
+  if (tile.type !== 'territory' || tile.owner !== playerId) {
+    throw new Error('Solo podés construir barreras en tu propio territorio');
+  }
+  if (unitAt(state, x, y)) throw new Error('No podés construir una barrera debajo de una ficha');
+
+  player.gold -= BARRIER_COST;
+  const maxHp = BARRIER_HP_BY_LEVEL[castle.level] || BARRIER_HP_BY_LEVEL[1];
+  tile.type = 'barrier';
+  tile.owner = playerId;
+  const barrier = {
+    id: state.barrierIdCounter++,
+    x: tile.x,
+    y: tile.y,
+    owner: playerId,
+    castleId: castle.id,
+    level: castle.level,
+    hp: maxHp,
+    maxHp,
+  };
+  if (!Array.isArray(state.barriers)) state.barriers = [];
+  state.barriers.push(barrier);
+  return barrier;
+}
+
+// La barrera desaparece: la casilla vuelve a ser territorio de su dueño.
+function removeBarrier(state, barrier) {
+  state.barriers = (state.barriers || []).filter((b) => b.id !== barrier.id);
+  const tile = tileAt(state, barrier.x, barrier.y);
+  if (tile && tile.type === 'barrier') {
+    tile.type = 'territory';
+    tile.owner = barrier.owner;
+  }
+}
+
+// Se regenera por completo al comienzo de cada turno (no solo al de su dueño).
+function tickBarrierRegen(state) {
+  (state.barriers || []).forEach((b) => { b.hp = b.maxHp; });
+}
+
+// Ataque a una barrera rival adyacente: mismo patrón que atacar una
+// criatura, pero desde el nivel 2 la barrera contraataca en vez de morir sola.
+function attackBarrier(state, playerId, unitId, barrierId) {
+  if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
+  const unit = findUnit(state, unitId);
+  if (!unit || unit.owner !== playerId) throw new Error('Ficha inválida');
+  if (unit.type === 'rey') throw new Error('El Rey no puede atacar');
+  if (isPetrified(unit)) throw new Error('Esa ficha está petrificada y no puede atacar');
+  if (isUnitDisarmed(state, unit)) throw new Error('Un eclipse impide atacar a esa ficha');
+  if (unit.attackedThisTurn) throw new Error('Esa ficha ya atacó este turno');
+
+  const barrier = (state.barriers || []).find((b) => b.id === barrierId);
+  if (!barrier || barrier.owner === playerId) throw new Error('Barrera inválida');
+
+  const dx = Math.abs(unit.x - barrier.x);
+  const dy = Math.abs(unit.y - barrier.y);
+  if (dx > 1 || dy > 1 || (dx === 0 && dy === 0)) {
+    throw new Error('La ficha debe estar adyacente a la barrera');
+  }
+
+  const dealt = Math.max(1, unit.atk);
+  barrier.hp -= dealt;
+  unit.attackedThisTurn = true;
+
+  const log = {
+    type: 'attackBarrier',
+    playerId,
+    unitId: unit.id,
+    unitType: unit.type,
+    barrierId: barrier.id,
+    barrierLevel: barrier.level,
+    dealt,
+    to: { x: barrier.x, y: barrier.y },
+  };
+
+  if (barrier.hp <= 0) {
+    barrier.hp = 0;
+    removeBarrier(state, barrier);
+    log.event = 'barrierDestroyed';
+    return log;
+  }
+
+  const counter = BARRIER_COUNTER_DAMAGE_BY_LEVEL[barrier.level] || 0;
+  if (counter > 0) {
+    unit.hp -= counter;
+    if (unit.hp <= 0) {
+      unit.hp = 0;
+      const kill = killUnit(state, unit);
+      log.event = 'attackerLostToBarrier';
+      log.counter = counter;
+      log.attackerRevived = kill.revived;
+      log.barrierHpRemaining = barrier.hp;
+      state.players.forEach((p) => checkPlayerDefeat(state, p));
+      checkVictory(state);
+      syncTurnOrder(state);
+      return log;
+    }
+  }
+
+  log.event = 'barrierDamaged';
+  log.counter = counter;
+  log.barrierHpRemaining = barrier.hp;
+  log.attackerHpRemaining = unit.hp;
+  return log;
+}
+
 // --- Mejora de castillo ---
 function upgradeCastle(state, playerId, castleId) {
   if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
@@ -669,6 +811,7 @@ function beginTurn(state, wrapped) {
   const newCurrentPlayerId = state.turnOrder[state.currentTurnIndex];
   const statusEvents = tickUnitStatuses(state, newCurrentPlayerId);
   statusEvents.forEach((evt) => queueEvent(state, evt));
+  tickBarrierRegen(state);
   state.players.forEach((p) => checkPlayerDefeat(state, p));
   syncTurnOrder(state);
 
@@ -711,6 +854,7 @@ function eliminatePlayer(state, player) {
 
   state.units = state.units.filter((u) => u.owner !== player.id);
   state.farms = state.farms.filter((f) => f.owner !== player.id);
+  state.barriers = (state.barriers || []).filter((b) => b.owner !== player.id);
   state.castles.forEach((c) => {
     if (c.owner === player.id) {
       c.owner = null;
@@ -761,6 +905,9 @@ module.exports = {
   moveUnit,
   produceUnit,
   buildFarm,
+  getBuildableBarrierTiles,
+  buildBarrier,
+  attackBarrier,
   upgradeCastle,
   attackCreature,
   attackUnit,

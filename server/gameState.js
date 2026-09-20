@@ -135,6 +135,13 @@ const FLYING_UNITS = new Set(['dragon', 'fenix']);
 const FARM_COST = 20;
 const FARM_INCOME = 4;
 
+// Barreras: bloquean el paso hasta que se destruyen. Vida y contraataque
+// según el nivel del castillo que las construyó (mismos valores que usa el
+// cliente para mostrar el costo/las estadísticas).
+const BARRIER_COST = 20;
+const BARRIER_HP_BY_LEVEL = { 1: 4, 2: 8, 3: 12 };
+const BARRIER_COUNTER_DAMAGE_BY_LEVEL = { 1: 0, 2: 2, 3: 3 };
+
 // Distribuye N castillos iniciales en un anillo alrededor del centro del tablero,
 // con margen fijo desde los bordes, para que queden equidistantes entre sí.
 function getInitialCastlePositions(boardSize, playerCount) {
@@ -279,6 +286,8 @@ function createGameState(playerCount) {
     weatherIdCounter: 1,
     chests: [], // cofres del tesoro (ver chests.js)
     chestIdCounter: 1,
+    barriers: [], // barreras defensivas construidas en territorio propio
+    barrierIdCounter: 1,
     eventQueue: [], // eventos de fondo pendientes de enviar al historial
   };
 }
@@ -415,6 +424,9 @@ module.exports = {
   MOVEMENT_RANGE,
   FARM_COST,
   FARM_INCOME,
+  BARRIER_COST,
+  BARRIER_HP_BY_LEVEL,
+  BARRIER_COUNTER_DAMAGE_BY_LEVEL,
   FLYING_UNITS,
   createGameState,
   addPlayer,

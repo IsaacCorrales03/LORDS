@@ -83,7 +83,7 @@ const UNIT_ICON_PATHS = {
   reina: '<path d="M3 17.5 L3 11.5 L6.3 13.8 L9 8.3 L12 12.2 L15 8.3 L17.7 13.8 L21 11.5 L21 17.5 Z" fill="currentColor"/><rect x="3" y="17.5" width="18" height="2.1" fill="currentColor"/><circle cx="12" cy="8.3" r="1.25" fill="currentColor"/><circle cx="6.3" cy="13.8" r="0.9" fill="currentColor"/><circle cx="17.7" cy="13.8" r="0.9" fill="currentColor"/>',
   torre: '<path d="M6.5 20 L6.5 9.6 L8.3 9.6 L8.3 11 L10.6 11 L10.6 9.6 L13.4 9.6 L13.4 11 L15.7 11 L15.7 9.6 L17.5 9.6 L17.5 20 Z" fill="currentColor"/><rect x="6.5" y="7.4" width="11" height="2.2" fill="currentColor"/>',
   alfil: '<path d="M12 3.2 C9.1 6.3 7.9 9.8 7.9 12.9 C7.9 16.1 9.6 18.1 12 19.2 C14.4 18.1 16.1 16.1 16.1 12.9 C16.1 9.8 14.9 6.3 12 3.2 Z" fill="currentColor"/><rect x="11.1" y="6.6" width="1.8" height="5.2" fill="var(--panel)"/><rect x="9.1" y="8.6" width="5.8" height="1.4" fill="var(--panel)"/><circle cx="12" cy="20.6" r="1.35" fill="currentColor"/>',
-  caballo: '<path d="M8 21.7 L8 15.2 C8 13.1 7.3 12.3 6.4 11.2 C5.6 10.2 5.5 8.8 6.3 7.7 C7 6.7 8.3 6.4 9.3 7 L9.6 5.6 C9.8 4.7 10.8 4.3 11.5 4.9 L13 6.1 C14.3 5.3 16 5.5 17 6.6 L18.8 8.6 C19.4 9.3 19.2 10.3 18.4 10.7 L16.7 11.6 C17 12.5 16.7 13.5 15.9 14 L14.6 14.8 L14.6 21.7 Z" fill="currentColor"/><path d="M9.6 7 C10.6 8 11.6 8.3 12.8 8.1" fill="none" stroke="#0c1119" stroke-width="0.9" stroke-linecap="round"/><circle cx="16" cy="9" r="0.85" fill="#0c1119"/><rect x="5.6" y="20" width="10.4" height="2.1" fill="currentColor"/>',
+  caballo: '<path d="M7.2 20 L7.2 12.2 A4.8 4.8 0 0 1 16.8 12.2 L16.8 20" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="8.4" cy="14.6" r="0.85" fill="currentColor"/><circle cx="10.3" cy="12" r="0.85" fill="currentColor"/><circle cx="13.7" cy="12" r="0.85" fill="currentColor"/><circle cx="15.6" cy="14.6" r="0.85" fill="currentColor"/>',
   peon: '<circle cx="12" cy="7.4" r="3" fill="currentColor"/><path d="M8.6 20 L9.6 12.4 H14.4 L15.4 20 Z" fill="currentColor"/><rect x="7.4" y="19" width="9.2" height="2.1" fill="currentColor"/>',
 };
 
@@ -206,6 +206,8 @@ const btnEndTurn = document.getElementById('btnEndTurn');
 const toast = document.getElementById('toast');
 const gameoverOverlay = document.getElementById('gameover-overlay');
 const btnPlayAgain = document.getElementById('btnPlayAgain');
+const btnBackToLobby = document.getElementById('btnBackToLobby');
+const gameoverWaitStatus = document.getElementById('gameoverWaitStatus');
 const turnBanner = document.getElementById('turnBanner');
 const turnBannerDot = document.getElementById('turnBannerDot');
 const turnBannerText = document.getElementById('turnBannerText');
@@ -254,6 +256,7 @@ socket.on('state:update', (state) => {
     gameScreen.classList.remove('active');
     createCard.style.display = 'block';
     roomCard.style.display = 'none';
+    gameoverOverlay.classList.remove('active');
     return;
   }
 
@@ -286,6 +289,7 @@ socket.on('state:update', (state) => {
   maybeShowTurnBanner(state);
   renderBoard(state);
   renderSelection();
+  if (state.phase === 'finished') renderGameoverStatus(state);
 });
 
 socket.on('game:started', () => {
@@ -346,11 +350,31 @@ socket.on('game:over', ({ winner, endedByLeader }) => {
   gameoverOverlay.classList.add('active');
 });
 
+// Ninguno de los dos botones resetea nada por sí solo: cada uno le avisa al
+// server su elección, y hasta que TODOS los jugadores conectados hayan
+// elegido, el estado (y esta pantalla) siguen en pie. renderGameoverStatus
+// se encarga de mostrar el aviso de espera correspondiente.
 btnPlayAgain.addEventListener('click', () => {
   SFX.play('ui_click');
-  gameoverOverlay.classList.remove('active');
-  socket.emit('game:restart');
+  socket.emit('game:playAgain');
 });
+btnBackToLobby.addEventListener('click', () => {
+  SFX.play('ui_click');
+  socket.emit('game:backToLobby');
+});
+
+function renderGameoverStatus(state) {
+  const mine = state.postGameChoices ? state.postGameChoices[myId] : null;
+  if (mine === 'again') {
+    gameoverWaitStatus.textContent = 'Ya hay una partida en curso. Esperando a que el resto decida…';
+  } else if (mine === 'lobby') {
+    gameoverWaitStatus.textContent = 'Partida en curso. Esperando a que el resto decida…';
+  } else {
+    gameoverWaitStatus.textContent = '';
+  }
+  btnPlayAgain.disabled = !!mine;
+  btnBackToLobby.disabled = !!mine;
+}
 
 // ================= SALA DE ESPERA =================
 

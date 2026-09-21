@@ -165,6 +165,47 @@ const BARRIER_COST = 20;
 const BARRIER_HP_BY_LEVEL = { 1: 4, 2: 8, 3: 12 };
 const BARRIER_COUNTER_DAMAGE_BY_LEVEL = { 1: 0, 2: 2, 3: 3 };
 
+// ¿Hay un clima activo de ese tipo cubriendo la casilla (x, y)? Helper puro
+// (solo lee state.activeWeather) para poder usarlo desde units.js/actions.js.
+function inActiveWeather(state, type, x, y) {
+  const w = state.activeWeather;
+  return !!(w && w.type === type && Array.isArray(w.cells) && w.cells.some((c) => c.x === x && c.y === y));
+}
+
+// --- Cuartel ---
+// Edificio único por jugador (se construye en territorio propio). Sus mejoras:
+//   farms:    ingreso de TODAS tus granjas (base FARM_INCOME = 4 -> 5 -> 6)
+//   walls:    nivel de las barreras/murallas (1 -> 2 -> 3), también las ya construidas
+//   discount: descuento en el costo de las tropas (10% -> 15% -> 20%)
+// Si un rival pisa el cuartel se destruye (con sus mejoras) y se puede volver
+// a construir uno nuevo desde cero.
+const BARRACKS_COST = 50;
+const BARRACKS_UPGRADES = {
+  farms:    { costs: [40, 80],       values: [5, 6] },
+  walls:    { costs: [40, 80],       values: [2, 3] },
+  discount: { costs: [60, 100, 150], values: [0.10, 0.15, 0.20] },
+};
+
+function barracksOf(state, playerId) {
+  return (state.barracks || []).find((b) => b.owner === playerId) || null;
+}
+function farmIncomeFor(state, playerId) {
+  const b = barracksOf(state, playerId);
+  return b && b.farmsTier > 0 ? BARRACKS_UPGRADES.farms.values[b.farmsTier - 1] : FARM_INCOME;
+}
+function barrierLevelFor(state, playerId) {
+  const b = barracksOf(state, playerId);
+  return 1 + (b ? b.wallsTier : 0);
+}
+function troopDiscountFor(state, playerId) {
+  const b = barracksOf(state, playerId);
+  return b && b.discountTier > 0 ? BARRACKS_UPGRADES.discount.values[b.discountTier - 1] : 0;
+}
+function troopCostFor(state, playerId, unitType) {
+  const base = UNIT_COSTS[unitType];
+  return Math.max(1, Math.round(base * (1 - troopDiscountFor(state, playerId))));
+}
+
 // Distribuye N castillos iniciales en un anillo alrededor del centro del tablero,
 // con margen fijo desde los bordes, para que queden equidistantes entre sí.
 function getInitialCastlePositions(boardSize, playerCount) {
@@ -312,6 +353,8 @@ function createGameState(playerCount) {
     chestIdCounter: 1,
     barriers: [], // barreras defensivas construidas en territorio propio
     barrierIdCounter: 1,
+    barracks: [], // cuarteles (máx. 1 por jugador), ver BARRACKS_UPGRADES
+    barracksIdCounter: 1,
     eventQueue: [], // eventos de fondo pendientes de enviar al historial
     hydraUsedThisTurn: false, // el 2º ataque de la Hidra se usa 1 vez por turno
   };
@@ -458,6 +501,14 @@ module.exports = {
   BARRIER_COST,
   BARRIER_HP_BY_LEVEL,
   BARRIER_COUNTER_DAMAGE_BY_LEVEL,
+  inActiveWeather,
+  BARRACKS_COST,
+  BARRACKS_UPGRADES,
+  barracksOf,
+  farmIncomeFor,
+  barrierLevelFor,
+  troopDiscountFor,
+  troopCostFor,
   FLYING_UNITS,
   createGameState,
   addPlayer,

@@ -3,7 +3,7 @@
 // habilidad de resurrección del Fénix) y cola de eventos para el historial.
 
 const { statsFor } = require('./combat');
-const { GARRISON_TROOP_LIMIT, garrisonTroopCount, POISON_STRIKE } = require('./gameState');
+const { GARRISON_TROOP_LIMIT, garrisonTroopCount, POISON_STRIKE, inActiveWeather } = require('./gameState');
 
 const PHOENIX_REVIVE_COST = 10;
 
@@ -29,16 +29,20 @@ function upgradesOf(state, ownerId) {
   return (p && p.upgrades) || null;
 }
 
+// Clima: la Tormenta de arena resta 1 ATQ y la Niebla densa suma 1 DEF a las
+// tropas (con dueño) que estén dentro de la zona en ese momento.
 function troopAtkBonus(state, unit) {
   if (!unit || unit.type === 'rey') return 0;
   const up = upgradesOf(state, unit.owner);
-  return up ? up.atkBonus : 0;
+  const sand = unit.owner && inActiveWeather(state, 'arena', unit.x, unit.y) ? 1 : 0;
+  return (up ? up.atkBonus : 0) - sand;
 }
 
 function troopDefBonus(state, unit) {
   if (!unit || unit.type === 'rey') return 0;
   const up = upgradesOf(state, unit.owner);
-  return up ? up.defBonus : 0;
+  const fog = unit.owner && inActiveWeather(state, 'niebla', unit.x, unit.y) ? 1 : 0;
+  return (up ? up.defBonus : 0) + fog;
 }
 
 // Modificadores para duel(): atacante vs defensor (cualquiera puede ser una

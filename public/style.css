@@ -1403,3 +1403,32 @@ button:disabled {
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
+
+
+/* =====================================================================
+   CUARTEL: casilla de piedra con marco del dueño + panel de mejoras
+   ===================================================================== */
+.tile.barracks { fill: #38404e; }
+.barracks-row-line, .barracks-row-decor { pointer-events: none; }
+line.barracks-row { stroke: #4b5566; stroke-width: 1; pointer-events: none; }
+.barracks-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+div.barracks-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--panel-border); border-radius: 4px; background: #0d131b;
+  font-size: 12.5px; line-height: 1.35;
+}
+div.barracks-row small { color: var(--ink-dim); }
+.barracks-pips { color: var(--gold); letter-spacing: 2px; font-size: 10px; }
+div.barracks-row .action-btn { flex-shrink: 0; min-width: 84px; }
+
+
+/* Clima: meteoros y cosecha */
+.meteor-rock { fill: #ffb15a; stroke: #ff6a2b; stroke-width: 1; opacity: 0; filter: drop-shadow(0 0 4px #ff7a2b); animation: meteor-fall 1.6s linear infinite; }
+.meteor-tail { stroke: #ff9a4a; stroke-width: 2; stroke-linecap: round; opacity: 0; animation: meteor-fall 1.6s linear infinite; }
+@keyframes meteor-fall {
+  0% { opacity: 0; transform: translate(8px, -12px); }
+  15%, 80% { opacity: 0.95; }
+  100% { opacity: 0; transform: translate(-12px, 24px); }
+}
+.harvest-stalk { fill: none; stroke: #f2d36b; stroke-width: 1.6; stroke-linecap: round; opacity: 0.9; transform-box: fill-box; transform-origin: bottom center; animation: harvest-sway 2.6s ease-in-out infinite; filter: drop-shadow(0 0 3px rgba(230, 192, 74, 0.7)); }
+@keyframes harvest-sway { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }

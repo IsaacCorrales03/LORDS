@@ -14,6 +14,8 @@ const {
   MIN_PLAYERS,
   MAX_PLAYERS,
   getActiveCreatures,
+  farmIncomeFor,
+  troopDiscountFor,
 } = require('./gameState');
 const actions = require('./actions');
 
@@ -48,6 +50,8 @@ function serializeState(s) {
       surrendered: !!p.surrendered,
       upgrades: p.upgrades || null, // mejoras permanentes por criaturas derrotadas
       unlockedUnits: p.unlockedUnits || [], // tropas especiales desbloqueadas
+      farmIncome: farmIncomeFor(s, p.id), // oro por granja (sube con el cuartel)
+      troopDiscount: troopDiscountFor(s, p.id), // 0..0.2, descuento del cuartel en tropas
     })),
     turnOrder: s.turnOrder,
     currentTurnIndex: s.currentTurnIndex,
@@ -62,6 +66,7 @@ function serializeState(s) {
     activeWeather: s.activeWeather,
     chests: s.chests || [],
     barriers: s.barriers || [],
+    barracks: s.barracks || [],
     turnCounter: s.turnCounter,
     hydraUsedThisTurn: !!s.hydraUsedThisTurn,
     turnDeadline: s.turnDeadline || null,
@@ -346,6 +351,35 @@ io.on('connection', (socket) => {
       actions.buildBarrier(state, socket.id, castleId, x, y);
       broadcastState();
       io.emit('action:log', { type: 'buildBarrier', playerId: socket.id, castleId });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
+  // Cuartel: mismas casillas que la barrera (territorio propio sin ficha).
+  socket.on('action:getBuildableBarracksTiles', () => {
+    if (!state) return;
+    const tiles = actions.getBuildableBarrierTiles(state, socket.id);
+    socket.emit('action:buildableBarracksTiles', { tiles });
+  });
+
+  socket.on('action:buildBarracks', ({ x, y }) => {
+    if (!state) return;
+    try {
+      actions.buildBarracks(state, socket.id, x, y);
+      broadcastState();
+      io.emit('action:log', { type: 'buildBarracks', playerId: socket.id });
+    } catch (err) {
+      socket.emit('error:message', err.message);
+    }
+  });
+
+  socket.on('action:upgradeBarracks', ({ track }) => {
+    if (!state) return;
+    try {
+      const res = actions.upgradeBarracks(state, socket.id, track);
+      broadcastState();
+      io.emit('action:log', { type: 'upgradeBarracks', playerId: socket.id, track: res.track, tier: res.tier });
     } catch (err) {
       socket.emit('error:message', err.message);
     }

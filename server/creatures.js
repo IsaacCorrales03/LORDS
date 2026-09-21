@@ -64,6 +64,8 @@ function pickCreatureType() {
 }
 
 function isTileFreeForCreature(state, x, y) {
+  const tt = state.tiles[y][x].type;
+  if (tt === 'farm' || tt === 'barracks') return false; // no bloquear edificios
   if (state.units.some((u) => u.x === x && u.y === y)) return false;
   if (getActiveCreatures(state).some((c) => c.x === x && c.y === y)) return false;
   return true;

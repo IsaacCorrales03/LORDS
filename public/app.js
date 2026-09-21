@@ -22,16 +22,17 @@ const CREATURE_INFO = {
 };
 const WEATHER_INFO = {
   electrica: { label: 'Tormenta eléctrica', color: '#f5d84a', note: '-1 de vida por turno a quien esté dentro.' },
-  nieve:     { label: 'Ventisca de nieve', color: '#bfe3ff', note: '-1 de vida por turno a quien esté dentro.' },
-  arena:     { label: 'Tormenta de arena', color: '#d9a85c', note: '-1 de vida por turno a quien esté dentro.' },
-  acido:     { label: 'Lluvia ácida', color: '#9be22d', note: '-1 de vida por turno a quien esté dentro.' },
-  niebla:    { label: 'Niebla densa', color: '#a9b7c6', note: '-1 de vida por turno a quien esté dentro.' },
+  meteoros:  { label: 'Lluvia de meteoros', color: '#ff7a3d', note: 'Caen meteoritos en casillas al azar de la zona: -3 de vida a quien esté justo debajo.' },
+  nieve:     { label: 'Ventisca de nieve', color: '#bfe3ff', note: 'Las fichas dentro solo pueden avanzar 1 casilla.' },
+  arena:     { label: 'Tormenta de arena', color: '#d9a85c', note: 'Las tropas dentro tienen -1 de ATQ.' },
+  niebla:    { label: 'Niebla densa', color: '#a9b7c6', note: 'Las tropas dentro tienen +1 de DEF (reciben 1 menos de daño).' },
   lluvia:    { label: 'Lluvia sanadora', color: '#6ec6ff', note: 'Sin daño: cura +2 de vida por turno a toda ficha dentro.' },
   eclipse:   { label: 'Eclipse', color: '#8a6fd6', note: 'Sin daño: las fichas dentro no pueden atacar (sí moverse).' },
   aurora:    { label: 'Aurora dorada', color: '#5fe0b0', note: 'Sin daño: +3 de oro por turno por cada tropa propia dentro.' },
   terremoto: { label: 'Terremoto', color: '#b58a5a', note: 'Las tropas dentro no pueden moverse.' },
+  cosecha:   { label: 'Cosecha dorada', color: '#e6c04a', note: 'Cada granja dentro de la zona da su ingreso extra por turno.' },
 };
-const WEATHER_FALLBACK = { label: 'Clima', color: '#9fb3c8', note: '-1 de vida por turno a quien esté dentro.' };
+const WEATHER_FALLBACK = { label: 'Clima', color: '#9fb3c8', note: 'Un clima extraño cubre esta zona.' };
 // Nunca devuelve undefined: un tipo de clima desconocido no debe romper el render.
 function weatherInfo(type) { return WEATHER_INFO[type] || WEATHER_FALLBACK; }
 function creatureInfo(type) { return CREATURE_INFO[type] || CREATURE_INFO.lobo; }
@@ -71,16 +72,21 @@ function upgradesOfPlayer(state, ownerId) {
   return (p && p.upgrades) || null;
 }
 // ATQ / DEF efectivos: el Rey y las criaturas neutrales no reciben bonos.
+// Clima que afecta a las tropas dentro de la zona: arena (-1 ATQ) y niebla (+1 DEF).
+function inWeatherType(state, unit, type) {
+  const w = state && state.activeWeather;
+  return !!(w && w.type === type && unit && isInWeatherZone(w, unit.x, unit.y));
+}
 function effAtk(unit, state = currentState) {
   if (!unit) return 0;
   if (unit.type === 'rey') return unit.atk;
   const up = upgradesOfPlayer(state, unit.owner);
-  return unit.atk + (up ? up.atkBonus : 0);
+  return unit.atk + (up ? up.atkBonus : 0) - (unit.owner && inWeatherType(state, unit, 'arena') ? 1 : 0);
 }
 function effDef(unit, state = currentState) {
   if (!unit || unit.type === 'rey') return 0;
   const up = upgradesOfPlayer(state, unit.owner);
-  return up ? up.defBonus : 0;
+  return (up ? up.defBonus : 0) + (unit.owner && inWeatherType(state, unit, 'niebla') ? 1 : 0);
 }
 // Daño que hará `attacker` a `defender` en su golpe, y lo que le devuelve el contraataque.
 function previewHit(attacker, defender) {
@@ -103,9 +109,41 @@ function incomeOf(state, playerId) {
   const castles = state.castles.filter((c) => c.owner === playerId);
   const farms = state.farms.filter((f) => f.owner === playerId).length;
   const fromCastles = castles.reduce((sum, c) => sum + (CASTLE_GOLD_PER_TURN[c.level] || 0), 0);
-  return fromCastles + farms * FARM_INCOME_CLIENT;
+  return fromCastles + farms * playerFarmIncome(state, playerId);
 }
 const CASTLE_UPGRADE_COST = { 2: 15, 3: 50 };
+
+// --- Cuartel (espejo de gameState.js): 1 por jugador, 50 de oro ---
+const BARRACKS_COST = 50;
+const BARRACKS_UPGRADES = {
+  farms:    { label: 'Granjas',  costs: [40, 80],       values: [5, 6] },
+  walls:    { label: 'Murallas', costs: [40, 80],       values: [2, 3] },
+  discount: { label: 'Tropas',   costs: [60, 100, 150], values: [0.10, 0.15, 0.20] },
+};
+function barracksOfClient(state, playerId) {
+  return (state.barracks || []).find((b) => b.owner === playerId) || null;
+}
+function playerFarmIncome(state, ownerId) {
+  const p = state.players.find((pl) => pl.id === ownerId);
+  return (p && p.farmIncome) || FARM_INCOME_CLIENT;
+}
+function troopCostFor(player, type) {
+  const d = player && player.troopDiscount ? player.troopDiscount : 0;
+  return Math.max(1, Math.round(UNIT_COSTS[type] * (1 - d)));
+}
+function myWallLevel(state) {
+  const b = barracksOfClient(state, myId);
+  return 1 + (b ? b.wallsTier : 0);
+}
+// Cuartel: tienda militar con la bandera del dueño (mismo estilo fijo que las fichas).
+function barracksMarkup(flagColor) {
+  return '<rect x="11.4" y="1.2" width="1.2" height="6.4" fill="#ece3c9"/>'
+    + `<path d="M12.6 1.7 L18.4 3.6 L12.6 5.5 Z" fill="${flagColor}" stroke="#0c1119" stroke-opacity="0.5" stroke-width="0.5" stroke-linejoin="round"/>`
+    + '<path d="M2.6 20.8 L12 6.6 L21.4 20.8 Z" fill="#ece3c9"/>'
+    + `<path d="M5.4 16.6 L12 6.6 L18.6 16.6 L17.2 18.4 L12 11.6 L6.8 18.4 Z" fill="${flagColor}" stroke="#0c1119" stroke-opacity="0.45" stroke-width="0.5" stroke-linejoin="round"/>`
+    + '<path d="M12 12.6 L15.4 20.8 H8.6 Z" fill="#0c1119"/>'
+    + '<path d="M3.2 22 L8 18.2 M20.8 22 L16 18.2" stroke="#ece3c9" stroke-width="1.1" stroke-linecap="round"/>';
+}
 const FARM_COST = 20;
 const BARRIER_COST = 20;
 const BARRIER_HP_BY_LEVEL = { 1: 4, 2: 8, 3: 12 };
@@ -236,6 +274,10 @@ let pendingFarmCastleId = null;
 let placingBarrier = false;
 let buildableBarrierTiles = [];
 let pendingBarrierCastleId = null;
+let placingBarracks = false;
+let pendingBarracks = false;
+let buildableBarracksTiles = [];
+let inspectedBarracksId = null; // cuartel (propio o rival) que se ve en el panel
 
 function cancelFarmPlacement() {
   placingFarm = false;
@@ -244,6 +286,9 @@ function cancelFarmPlacement() {
   placingBarrier = false;
   buildableBarrierTiles = [];
   pendingBarrierCastleId = null;
+  placingBarracks = false;
+  pendingBarracks = false;
+  buildableBarracksTiles = [];
 }
 
 // --- Elementos: lobby ---
@@ -270,6 +315,10 @@ const castleActions = document.getElementById('castleActions');
 const produceGrid = document.getElementById('produceGrid');
 const btnBuildFarm = document.getElementById('btnBuildFarm');
 const btnBuildBarrier = document.getElementById('btnBuildBarrier');
+// El botón del cuartel se crea a partir del de la barrera (no hace falta tocar index.html).
+const btnBuildBarracks = btnBuildBarrier.cloneNode(true);
+btnBuildBarracks.id = 'btnBuildBarracks';
+btnBuildBarrier.after(btnBuildBarracks);
 const btnUpgrade = document.getElementById('btnUpgrade');
 const btnEndTurn = document.getElementById('btnEndTurn');
 const toast = document.getElementById('toast');
@@ -425,6 +474,15 @@ socket.on('action:buildableBarrierTiles', ({ tiles }) => {
   buildableBarrierTiles = tiles;
   placingBarrier = true;
   showToast('Elegí una casilla de tu territorio para la barrera');
+  renderBoard(currentState);
+  renderSelection();
+});
+
+socket.on('action:buildableBarracksTiles', ({ tiles }) => {
+  if (!pendingBarracks) return;
+  buildableBarracksTiles = tiles;
+  placingBarracks = true;
+  showToast('Elegí una casilla de tu territorio para el cuartel');
   renderBoard(currentState);
   renderSelection();
 });
@@ -822,6 +880,7 @@ function renderBoard(state) {
   const reachableSet = new Set(reachableTiles.map((t) => `${t.x},${t.y}`));
   const buildableFarmSet = new Set(buildableFarmTiles.map((t) => `${t.x},${t.y}`));
   const buildableBarrierSet = new Set(buildableBarrierTiles.map((t) => `${t.x},${t.y}`));
+  const buildableBarracksSet = new Set(buildableBarracksTiles.map((t) => `${t.x},${t.y}`));
   const newTileSig = new Map();
   const claimedCells = [];
 
@@ -880,12 +939,14 @@ function renderBoard(state) {
         });
       }
 
-      const buildableSet = placingFarm ? buildableFarmSet : (placingBarrier ? buildableBarrierSet : null);
+      const buildableSet = placingFarm ? buildableFarmSet : (placingBarrier ? buildableBarrierSet : (placingBarracks ? buildableBarracksSet : null));
       if (buildableSet && buildableSet.has(key)) {
         rect.classList.add('buildable');
         rect.addEventListener('click', () => {
           if (placingFarm) {
             socket.emit('action:buildFarm', { castleId: pendingFarmCastleId, x, y });
+          } else if (placingBarracks) {
+            socket.emit('action:buildBarracks', { x, y });
           } else {
             socket.emit('action:buildBarrier', { castleId: pendingBarrierCastleId, x, y });
           }
@@ -989,9 +1050,51 @@ function renderBoard(state) {
         // Etiqueta de ingreso arriba a la derecha.
         boardSvg.appendChild(svgEl('rect', { x: fx0 + TILE_SIZE - 16, y: fy0 + 3, width: 13, height: 8.5, rx: 4.2 }, 'farm-pill'));
         const farmTag = svgEl('text', { x: fx0 + TILE_SIZE - 9.5, y: fy0 + 9.3, 'text-anchor': 'middle' }, 'farm-tag');
-        farmTag.textContent = `+${FARM_INCOME_CLIENT}`;
+        farmTag.textContent = `+${ownerPlayer ? playerFarmIncome(state, ownerPlayer.id) : FARM_INCOME_CLIENT}`;
         boardSvg.appendChild(farmTag);
       }
+      if (tile.type === 'barracks') {
+        const bx0 = x * TILE_SIZE;
+        const by0 = y * TILE_SIZE;
+        const bcx0 = bx0 + TILE_SIZE / 2;
+        const bcy0 = by0 + TILE_SIZE / 2;
+        const bColor = ownerPlayer ? PLAYER_COLOR_HEX[ownerPlayer.color] : '#888888';
+        const barracksObj = (state.barracks || []).find((b) => b.x === x && b.y === y);
+
+        [0.25, 0.5, 0.75].forEach((f) => {
+          boardSvg.appendChild(svgEl('line', { x1: bx0 + 2, y1: by0 + TILE_SIZE * f, x2: bx0 + TILE_SIZE - 2, y2: by0 + TILE_SIZE * f }, 'barracks-row'));
+        });
+        const bFrame = svgEl('rect', { x: bx0 + 1.5, y: by0 + 1.5, width: TILE_SIZE - 3, height: TILE_SIZE - 3 }, 'farm-frame');
+        bFrame.setAttribute('stroke', bColor);
+        boardSvg.appendChild(bFrame);
+
+        const bScale = 1.1;
+        const bIcon = svgEl('g', { transform: `translate(${bcx0 - 12 * bScale}, ${bcy0 - 11.8 * bScale}) scale(${bScale})` }, 'farm-icon');
+        bIcon.innerHTML = barracksMarkup(bColor);
+        boardSvg.appendChild(bIcon);
+
+        if (barracksObj) {
+          const stars = barracksObj.farmsTier + barracksObj.wallsTier + barracksObj.discountTier;
+          if (stars > 0) {
+            boardSvg.appendChild(svgEl('rect', { x: bx0 + TILE_SIZE - 16, y: by0 + 3, width: 13, height: 8.5, rx: 4.2 }, 'farm-pill'));
+            const sTag = svgEl('text', { x: bx0 + TILE_SIZE - 9.5, y: by0 + 9.3, 'text-anchor': 'middle' }, 'farm-tag');
+            sTag.textContent = `★${stars}`;
+            boardSvg.appendChild(sTag);
+          }
+          const barHit = svgEl('circle', { cx: bcx0, cy: bcy0, r: TILE_SIZE / 2 - 3 }, 'unit-hit');
+          barHit.addEventListener('click', () => {
+            // Con una ficha elegida que puede llegar aquí, el clic la mueve (captura si es rival).
+            if (selectedUnitId && reachableSet.has(key)) {
+              reachableTiles = [];
+              socket.emit('action:move', { unitId: selectedUnitId, x, y });
+            } else {
+              inspectBarracks(barracksObj.id);
+            }
+          });
+          boardSvg.appendChild(barHit);
+        }
+      }
+
       if (tile.type === 'barrier') {
         const barrier = barrierAt(state, x, y);
         const bcx = x * TILE_SIZE + TILE_SIZE / 2;
@@ -1273,17 +1376,22 @@ function renderWeather(state) {
         streak.style.animationDelay = phaseDelay(2, i + seed);
         g.appendChild(streak);
       }
-    } else if (w.type === 'acido') {
-      for (let i = 0; i < 3; i++) {
-        const dx = px + 6 + ((seed + i * 11) % (T - 12));
-        const drop = svgEl('path', { d: `M${dx} ${py} q3 5 0 8 q-3 -3 0 -8 Z` }, 'acid-drop');
-        drop.style.animationDuration = `${1.3 + i * 0.35}s`;
-        drop.style.animationDelay = phaseDelay(1.8, i + seed);
-        g.appendChild(drop);
+    } else if (w.type === 'meteoros') {
+      if ((x * 3 + y) % 2 === 0) {
+        const tail = svgEl('line', { x1: px + 26, y1: py + 6, x2: px + 32, y2: py - 4 }, 'meteor-tail');
+        tail.style.animationDelay = phaseDelay(2.2, seed);
+        g.appendChild(tail);
+        const rock = svgEl('circle', { cx: px + 26, cy: py + 6, r: 3 }, 'meteor-rock');
+        rock.style.animationDelay = phaseDelay(2.2, seed);
+        g.appendChild(rock);
       }
-      const bubble = svgEl('circle', { cx: px + 10 + (seed % 20), cy: py + T - 9, r: 3.2 }, 'acid-bubble');
-      bubble.style.animationDelay = phaseDelay(2, seed);
-      g.appendChild(bubble);
+    } else if (w.type === 'cosecha') {
+      for (let i = 0; i < 2; i++) {
+        const sx = px + 10 + i * 16 + (seed % 4);
+        const stalk = svgEl('path', { d: `M${sx} ${py + T - 4} q2 -8 0 -16 m0 4 l-3 -3 m3 6 l3 -3 m-3 -1 l-3 -3` }, 'harvest-stalk');
+        stalk.style.animationDelay = phaseDelay(2.6, seed + i * 3);
+        g.appendChild(stalk);
+      }
     } else if (w.type === 'niebla') {
       for (let i = 0; i < 2; i++) {
         const puff = svgEl('ellipse', {
@@ -1499,13 +1607,28 @@ function inspectUnit(unitId) {
 }
 
 function inspectCreature(creatureId) {
+  inspectedBarracksId = null;
   inspectedCreatureId = creatureId == null ? null : creatureId;
   inspectedUnitId = null;
   inspectedBarrierId = null;
   renderSelection();
 }
 
+function inspectBarracks(barracksId) {
+  cancelFarmPlacement();
+  selectedUnitId = null;
+  selectedCastleId = null;
+  reachableTiles = [];
+  inspectedUnitId = null;
+  inspectedCreatureId = null;
+  inspectedBarrierId = null;
+  inspectedBarracksId = barracksId == null ? null : barracksId;
+  renderBoard(currentState);
+  renderSelection();
+}
+
 function inspectBarrier(barrierId) {
+  inspectedBarracksId = null;
   inspectedBarrierId = barrierId == null ? null : barrierId;
   inspectedUnitId = null;
   inspectedCreatureId = null;
@@ -1519,6 +1642,7 @@ function selectUnit(unitId) {
   inspectedUnitId = null;
   inspectedCreatureId = null;
   inspectedBarrierId = null;
+  inspectedBarracksId = null;
   selectedCastleId = null;
   if (selectedUnitId === unitId) {
     SFX.play('deselect');
@@ -1545,6 +1669,7 @@ function selectCastle(castleId) {
   inspectedUnitId = null;
   inspectedCreatureId = null;
   inspectedBarrierId = null;
+  inspectedBarracksId = null;
   reachableTiles = [];
   SFX.play(selectedCastleId === castleId ? 'deselect' : 'select_castle');
   selectedCastleId = selectedCastleId === castleId ? null : castleId;
@@ -1588,6 +1713,42 @@ function renderSelection() {
           <span class="chip chip-hp" title="Vida"><b>${c.hp}</b>/${c.maxHp} VIDA</span>
         </div>
       `;
+      castleActions.style.display = 'none';
+      return;
+    }
+    const inspectedBarracks = inspectedBarracksId != null ? (currentState.barracks || []).find((b) => b.id === inspectedBarracksId) : null;
+    if (inspectedBarracks) {
+      const b = inspectedBarracks;
+      const owner = currentState.players.find((p) => p.id === b.owner);
+      const mine = b.owner === myId;
+      const flag = owner ? PLAYER_COLOR_HEX[owner.color] : '#888888';
+      const rows = Object.keys(BARRACKS_UPGRADES).map((track) => {
+        const up = BARRACKS_UPGRADES[track];
+        const tier = b[`${track}Tier`];
+        const maxed = tier >= up.costs.length;
+        const cost = maxed ? null : up.costs[tier];
+        const fmt = (v) => (track === 'farms' ? `${v} oro por granja` : (track === 'walls' ? `Nv ${v}` : `-${Math.round(v * 100)}% costo`));
+        const cur = track === 'farms' ? (tier > 0 ? up.values[tier - 1] : 4) : (track === 'walls' ? 1 + tier : (tier > 0 ? up.values[tier - 1] : 0));
+        const curTxt = track === 'discount' && cur === 0 ? 'sin descuento' : fmt(cur);
+        const nextTxt = maxed ? 'Nivel máximo' : `→ ${fmt(up.values[tier])}`;
+        const can = mine && isMyTurn && !maxed && myPlayer && myPlayer.gold >= cost;
+        return `<div class="barracks-row">
+          <div><b>${up.label}</b> <span class="barracks-pips">${'●'.repeat(tier)}${'○'.repeat(up.costs.length - tier)}</span><br><small>${curTxt} ${nextTxt}</small></div>
+          ${mine ? `<button class="action-btn" data-track="${track}" ${can ? '' : 'disabled'}><span>${maxed ? 'Máx.' : 'Mejorar'}</span><span class="cost">${maxed ? '' : cost}</span></button>` : ''}
+        </div>`;
+      }).join('');
+      selectionBox.innerHTML = `
+        <div style="display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600;">
+          <svg class="sel-icon" viewBox="0 0 24 24">${barracksMarkup(flag)}</svg>
+          <span>Cuartel</span>
+        </div>
+        <div style="color:var(--ink-dim); font-size:12px; margin-top:4px;">Dueño: <b style="color:var(--ink);">${mine ? 'Tuyo' : (owner ? escapeHtml(owner.name) : 'Desconocido')}</b></div>
+        <div style="color:var(--ink-dim); font-size:12px;">${mine ? 'Si un rival lo pisa, se destruye con todas sus mejoras.' : 'Pisalo con una ficha para destruirlo.'}</div>
+        <div class="barracks-list">${rows}</div>
+      `;
+      selectionBox.querySelectorAll('[data-track]').forEach((btn) => {
+        btn.onclick = () => { SFX.play('ui_click'); socket.emit('action:upgradeBarracks', { track: btn.dataset.track }); };
+      });
       castleActions.style.display = 'none';
       return;
     }
@@ -1666,6 +1827,7 @@ function renderSelection() {
     </div>
     <div class="sel-hpbar"><i style="width:${Math.round((unit.hp / unit.maxHp) * 100)}%; background:${hpColor(unit.hp / unit.maxHp)}"></i></div>
     <div style="color:var(--ink-dim); font-size:12px; margin-top:6px;">
+      ${unit.type !== 'rey' && inWeatherType(currentState, unit, 'nieve') ? '<span style="color:#bfe3ff">Ventisca: solo puede avanzar 1 casilla</span><br>' : ''}${unit.type !== 'rey' && unit.owner && inWeatherType(currentState, unit, 'arena') ? '<span style="color:#d9a85c">Tormenta de arena: -1 ATQ</span><br>' : ''}${unit.type !== 'rey' && unit.owner && inWeatherType(currentState, unit, 'niebla') ? '<span style="color:#a9b7c6">Niebla densa: +1 DEF</span><br>' : ''}
       ${unit.type === 'rey' ? 'El Rey permanece en su castillo' : (isInQuake(currentState, unit) ? 'Inmovilizada por el terremoto' : (unit.movedThisTurn ? 'Ya se movió este turno' : 'Puede moverse'))}
       ${unit.type === 'fenix' ? `<br><span class="phoenix-note">${(currentState.players.find((p) => p.id === unit.owner) || {}).phoenixRevived ? 'Resurrección ya usada' : 'Resurrección disponible (10 de oro, castillo más cercano)'}</span>` : ''}
       ${FLYING_TYPES.has(unit.type) ? '<br>Vuela sobre los abismos' : ''}
@@ -1706,7 +1868,8 @@ function renderSelection() {
     const inBarrierPlacement = placingBarrier && pendingBarrierCastleId === castle.id;
     const barrierDisabled = !myPlayer || myPlayer.gold < BARRIER_COST;
     btnBuildBarrier.disabled = barrierDisabled && !inBarrierPlacement;
-    const barrierLevelInfo = `Nv ${castle.level}: ${BARRIER_HP_BY_LEVEL[castle.level]} vida${BARRIER_COUNTER_DAMAGE_BY_LEVEL[castle.level] ? `, ${BARRIER_COUNTER_DAMAGE_BY_LEVEL[castle.level]} de contraataque` : ''}`;
+    const wl = myWallLevel(currentState);
+    const barrierLevelInfo = `Nv ${wl} (sube con el cuartel): ${BARRIER_HP_BY_LEVEL[wl]} vida${BARRIER_COUNTER_DAMAGE_BY_LEVEL[wl] ? `, ${BARRIER_COUNTER_DAMAGE_BY_LEVEL[wl]} de contraataque` : ''}`;
     btnBuildBarrier.title = barrierLevelInfo;
     btnBuildBarrier.querySelector('span:first-child').textContent = inBarrierPlacement ? 'Cancelar selección' : 'Construir barrera';
     btnBuildBarrier.querySelector('.cost').textContent = inBarrierPlacement ? '' : `${BARRIER_COST} oro`;
@@ -1721,6 +1884,28 @@ function renderSelection() {
         socket.emit('action:getBuildableBarrierTiles');
       }
     };
+
+    // Cuartel: 1 por jugador. Si ya tenés uno, el botón se oculta.
+    if (barracksOfClient(currentState, myId)) {
+      btnBuildBarracks.style.display = 'none';
+    } else {
+      btnBuildBarracks.style.display = '';
+      btnBuildBarracks.disabled = (!myPlayer || myPlayer.gold < BARRACKS_COST) && !placingBarracks;
+      btnBuildBarracks.title = 'Mejora granjas, murallas y el costo de las tropas. Máx. 1; si un rival lo pisa, se destruye.';
+      btnBuildBarracks.querySelector('span:first-child').textContent = placingBarracks ? 'Cancelar selección' : 'Construir cuartel';
+      btnBuildBarracks.querySelector('.cost').textContent = placingBarracks ? '' : `${BARRACKS_COST} oro`;
+      btnBuildBarracks.onclick = () => {
+        if (placingBarracks) {
+          cancelFarmPlacement();
+          renderBoard(currentState);
+          renderSelection();
+        } else {
+          SFX.play('ui_click');
+          pendingBarracks = true;
+          socket.emit('action:getBuildableBarracksTiles');
+        }
+      };
+    }
 
     const nextCost = CASTLE_UPGRADE_COST[castle.level + 1];
     if (nextCost === undefined) {
@@ -1740,11 +1925,13 @@ function renderProduceGrid(castle, myPlayer) {
   produceGrid.innerHTML = '';
   const unlocked = (myPlayer && myPlayer.unlockedUnits) || [];
   Object.keys(UNIT_COSTS).forEach((type) => {
-    const cost = UNIT_COSTS[type];
+    const cost = troopCostFor(myPlayer, type);
+    const baseCost = UNIT_COSTS[type];
     const locked = UNLOCKABLE_UNITS.includes(type) && !unlocked.includes(type);
     const btn = document.createElement('button');
     btn.className = 'action-btn' + (locked ? ' locked' : '');
     btn.innerHTML = `<span style="display:flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" fill="${locked ? '#5a6b7d' : 'var(--gold)'}" color="${locked ? '#5a6b7d' : 'var(--gold)'}">${unitIconMarkup(type)}</svg>${UNIT_LABELS[type]}</span><span class="cost">${locked ? 'Bloq.' : cost}</span>`;
+    if (!locked && cost < baseCost) btn.title = `Precio base ${baseCost}: descuento del cuartel`;
     const full = castleTroopStats(castle).produced >= CASTLE_LEVEL_INFO[castle.level].militaryCapacity;
     btn.disabled = locked || !myPlayer || myPlayer.gold < cost || full;
     if (locked) btn.title = `Derrota a un ${UNIT_LABELS[type]} salvaje para desbloquearlo (${cost} de oro)`;
@@ -1817,10 +2004,10 @@ const COMBAT_EVENTS = new Set([
   'attackUnitKilled', 'attackUnitHit', 'barrierDamaged', 'barrierDestroyed', 'attackerLostToBarrier',
 ]);
 const CAPTURE_EVENTS = new Set([
-  'castleCaptured', 'neutralCastleCaptured', 'farmCaptured',
+  'castleCaptured', 'neutralCastleCaptured', 'farmCaptured', 'barracksCaptured',
   'creatureDefeated', 'creatureUnlocked', 'phoenixRevived',
 ]);
-const WORLD_EVENTS = new Set(['chestSpawned', 'chestCollected', 'creatureDespawned', 'weatherHeal', 'weatherGold', 'turnTimeout', 'creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
+const WORLD_EVENTS = new Set(['chestSpawned', 'chestCollected', 'creatureDespawned', 'weatherHeal', 'weatherGold', 'weatherMeteor', 'turnTimeout', 'creatureSpawned', 'weatherSpawned', 'weatherEnded', 'phoenixLost', 'surrender', 'disconnect']);
 
 function logClassFor(event) {
   if (COMBAT_EVENTS.has(event)) return 'log-combat';
@@ -1855,6 +2042,7 @@ function describeLog(log) {
   let text = describeLogBase(log);
   if (log.poisoned) text += ' · ¡envenenado!';
   if (log.second) text += ' · 2º ataque (Hidra)';
+  if (log.barracksCaptured) text += ' · ¡cuartel destruido!';
   return text;
 }
 
@@ -1873,6 +2061,7 @@ function describeLogBase(log) {
     case 'fieldCombatDefenderWins': return `Combate en campo abierto perdido: el atacante cae${log.attackerRevived ? ' (el Fénix resucita)' : ''}${dmgText(log)}`;
     case 'fieldCombatStandoff': return `Combate en campo abierto: ambos sobreviven${dmgText(log)}`;
     case 'farmCaptured': return `Granja capturada en ${to}`;
+    case 'barracksCaptured': return `¡Cuartel de ${playerNameOf(log.ownerId) || 'un rival'} destruido en ${to}!`;
     case 'moved': return `Movimiento ${from} → ${to}`;
 
     case 'creatureSpawned': return `Aparece ${label(log.creature.type)} en ${to}`;
@@ -1893,7 +2082,10 @@ function describeLogBase(log) {
     case 'chestCollected': return `${playerNameOf(log.playerId)} abre un cofre: +${log.gold} de oro`;
     case 'creatureDespawned': return `${label(log.creature.type)} se marcha del tablero tras 10 rondas`;
     case 'weatherHeal': return `Lluvia sanadora: ${log.count} ficha(s) recuperan vida`;
-    case 'weatherGold': return `${playerNameOf(log.playerId)} gana +${log.gold} de oro bajo la aurora`;
+    case 'weatherGold': return log.weatherType === 'cosecha'
+      ? `${playerNameOf(log.playerId)} cosecha +${log.gold} de oro de sus granjas`
+      : `${playerNameOf(log.playerId)} gana +${log.gold} de oro bajo la aurora`;
+    case 'weatherMeteor': return `Lluvia de meteoros: ${log.cells ? log.cells.length : 0} impacto(s)${log.hits ? `, ${log.hits} ficha(s) golpeada(s)` : ', ninguna ficha golpeada'}`;
     case 'turnTimeout': return `${playerNameOf(log.playerId)} se quedó sin tiempo: turno terminado`;
     case 'phoenixRevived': return log.inPlace ? '¡El Fénix renace donde cayó! (-10 de oro)' : `¡El Fénix renace en el castillo #${log.castleId}! (-10 de oro)`;
     case 'phoenixLost': {
@@ -1911,6 +2103,8 @@ function describeLogBase(log) {
       if (log.type === 'produce') return `Ficha producida: ${label(log.unitType)}`;
       if (log.type === 'buildFarm') return `Granja construida`;
       if (log.type === 'buildBarrier') return `Barrera construida`;
+      if (log.type === 'buildBarracks') return `${playerNameOf(log.playerId)} construyó un cuartel`;
+      if (log.type === 'upgradeBarracks') return `${playerNameOf(log.playerId)} mejoró su cuartel (${(BARRACKS_UPGRADES[log.track] || {}).label || log.track} ${log.tier})`;
       if (log.type === 'upgradeCastle') return `Castillo mejorado a nivel ${log.newLevel}`;
       return from && to ? `Movimiento ${from} → ${to}` : 'Acción';
   }
@@ -1950,6 +2144,11 @@ const RULES_SLIDES = [
     <ul><li>Un castillo sostiene hasta <b>2 / 3 / 4</b> tropas según su nivel.</li>
     <li>Sobre su casilla caben <b>solo 2</b>; las demás aparecen en una casilla libre alrededor.</li>
     <li>Una ficha recién producida no actúa ese turno.</li></ul>` },
+  { title: 'Cuartel', body: `<p>Cuesta <b>50 de oro</b>, se construye en tu territorio y solo puedes tener <b>1</b>. Sus mejoras:</p>
+    <ul><li><b>Granjas:</b> todas rinden 5, luego 6 de oro (base 4).</li>
+    <li><b>Murallas:</b> tus barreras suben a Nv 2 y Nv 3 (también las ya construidas).</li>
+    <li><b>Tropas:</b> 10%, 15% y 20% de descuento al producir.</li></ul>
+    <p class="rules-tip">Si un rival pisa tu cuartel, se destruye con todas sus mejoras. Puedes construir otro desde cero.</p>` },
   { title: 'Movimiento', body: `<ul><li><b>Peón:</b> 1 casilla, sin diagonales.</li>
     <li><b>Caballo:</b> salto en L, como en el ajedrez.</li>
     <li><b>Alfil:</b> diagonales, hasta chocar.</li>
@@ -1974,12 +2173,14 @@ const RULES_SLIDES = [
     <li><b>Hidra:</b> una vez por turno, <b>una sola tropa</b> que ya atacó puede atacar por segunda vez.</li>
     <li><b>Dragón, Grifo y Fénix:</b> desbloquean producirlos en tus castillos.</li></ul>
     <p class="rules-tip">El Rey no recibe bonos. Tus mejoras se ven en tu tarjeta de jugador.</p>` },
-  { title: 'Clima', body: `<p>Desde la ronda 3 cae una tormenta sobre <b>9 casillas</b> durante 2 turnos:</p>
-    <ul><li><b>Dañan (−1 vida):</b> eléctrica, nieve, arena, ácido y niebla.</li>
-    <li><b>Terremoto:</b> inmoviliza a quien esté dentro.</li>
-    <li><b>Lluvia:</b> cura +2 de vida.</li>
-    <li><b>Eclipse:</b> impide atacar (se puede mover).</li>
-    <li><b>Aurora:</b> +3 de oro por tropa propia dentro.</li></ul>` },
+  { title: 'Clima', body: `<p>Desde la ronda 3 cae un clima sobre una zona de <b>6 a 27 casillas</b> (el tamaño cambia cada vez) durante 2 turnos:</p>
+    <ul><li><b>Eléctrica:</b> −1 de vida por turno.</li>
+    <li><b>Meteoros:</b> impactos al azar en la zona: −3 de vida a quien esté debajo.</li>
+    <li><b>Ventisca:</b> solo se avanza 1 casilla.</li>
+    <li><b>Arena:</b> −1 ATQ a las tropas dentro. <b>Niebla:</b> +1 DEF.</li>
+    <li><b>Terremoto:</b> inmoviliza. <b>Eclipse:</b> impide atacar.</li>
+    <li><b>Lluvia:</b> cura +2. <b>Aurora:</b> +3 de oro por tropa propia dentro.</li>
+    <li><b>Cosecha:</b> cada granja dentro da su ingreso extra por turno.</li></ul>` },
 ];
 
 (function setupRules() {

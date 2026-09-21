@@ -8,6 +8,8 @@ const {
   MOVEMENT_RANGE,
   FARM_COST,
   FARM_INCOME,
+  inActiveWeather,
+  BARRACKS_COST, BARRACKS_UPGRADES, barracksOf, farmIncomeFor, barrierLevelFor, troopCostFor,
   BARRIER_COST,
   BARRIER_HP_BY_LEVEL,
   BARRIER_COUNTER_DAMAGE_BY_LEVEL,
@@ -58,7 +60,7 @@ function collectGold(state) {
       income += levelInfo.goldPerTurn;
     });
     const ownedFarms = state.farms.filter((f) => f.owner === player.id);
-    income += ownedFarms.length * FARM_INCOME;
+    income += ownedFarms.length * farmIncomeFor(state, player.id);
     player.gold += income;
   });
 }
@@ -176,7 +178,11 @@ function isHostileTile(state, unit, x, y) {
 // ficha que ya atacó este turno no puede entrar a una casilla hostil (salvo
 // el 2º ataque de la Hidra, ver ensureCanAttack).
 function getReachableTiles(state, unit) {
-  const tiles = getReachableTilesRaw(state, unit);
+  let tiles = getReachableTilesRaw(state, unit);
+  // Ventisca: quien esté dentro solo puede avanzar 1 casilla (en cualquier dirección).
+  if (inActiveWeather(state, 'nieve', unit.x, unit.y)) {
+    tiles = tiles.filter((t) => Math.max(Math.abs(t.x - unit.x), Math.abs(t.y - unit.y)) <= 1);
+  }
   if (!unit.attackedThisTurn) return tiles;
   let canAgain = true;
   try { ensureCanAttack(state, unit); } catch (e) { canAgain = false; }
@@ -217,6 +223,18 @@ function getReachableTilesRaw(state, unit) {
 // trayecto, incluso cuando ese trayecto sea geométricamente una línea recta
 // (como pasa con el salto en diagonal del Grifo).
 const JUMPING_UNIT_TYPES = new Set(['caballo', 'grifo']);
+
+// Un rival que pisa el cuartel lo destruye (con todas sus mejoras): la casilla
+// queda como territorio del que lo capturó. Devuelve el id del dueño anterior
+// (o null si no había cuartel rival ahí).
+function captureBarracksIfEnemy(state, playerId, destTile, x, y) {
+  if (!destTile || destTile.type !== 'barracks' || destTile.owner === playerId) return null;
+  const prevOwner = destTile.owner;
+  state.barracks = (state.barracks || []).filter((b) => !(b.x === x && b.y === y));
+  destTile.type = 'territory';
+  destTile.owner = playerId;
+  return prevOwner;
+}
 
 function claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, isJump = false) {
   const dx = Math.sign(toX - fromX);
@@ -407,6 +425,7 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
       // La casilla queda conquistada; si era granja enemiga, se captura en
       // vez de quedar sin dueño (antes dependía solo de claimTerritoryAlongPath,
       // que no toca casillas tipo 'farm').
+      const barracksTaken = captureBarracksIfEnemy(state, playerId, destTile, toX, toY);
       if (destTile.type === 'farm' && destTile.owner && destTile.owner !== playerId) {
         const farm = state.farms.find((f) => f.x === toX && f.y === toY);
         if (farm) {
@@ -415,12 +434,12 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
           farm.owner = playerId;
           farm.castleId = null;
         }
-      } else if (destTile.type !== 'castle') {
+      } else if (destTile.type !== 'castle' && destTile.type !== 'barracks') {
         destTile.type = 'territory';
       }
       destTile.owner = playerId;
 
-      log = { ...log, event: 'fieldCombatAttackerWins', attackerHp: unit.hp };
+      log = { ...log, event: 'fieldCombatAttackerWins', attackerHp: unit.hp, barracksCaptured: !!barracksTaken, ownerId: barracksTaken };
     } else if (res.attackerDied) {
       const kill = killUnit(state, unit);
       log = { ...log, event: 'fieldCombatDefenderWins', defenderHp: enemyUnitAtDest.hp, attackerRevived: kill.revived };
@@ -443,12 +462,14 @@ function moveUnitInner(state, playerId, unitId, toX, toY) {
       destTile.owner = playerId;
       log = { ...log, event: 'farmCaptured' };
     }
+    const prevBarracksOwner = captureBarracksIfEnemy(state, playerId, destTile, toX, toY);
+    if (prevBarracksOwner) log = { ...log, event: 'barracksCaptured', ownerId: prevBarracksOwner };
     unit.castleId = null;
     unit.x = toX;
     unit.y = toY;
     unit.movedThisTurn = true;
     claimTerritoryAlongPath(state, playerId, fromX, fromY, toX, toY, JUMPING_UNIT_TYPES.has(unit.type));
-    if (destTile.type !== 'castle' && destTile.type !== 'farm') destTile.type = 'territory';
+    if (destTile.type !== 'castle' && destTile.type !== 'farm' && destTile.type !== 'barracks') destTile.type = 'territory';
     destTile.owner = playerId;
     if (!log.event) log = { ...log, event: 'moved' };
   }
@@ -557,8 +578,8 @@ function produceUnit(state, playerId, castleId, unitType) {
   const castle = findCastle(state, castleId);
   if (!castle || castle.owner !== playerId) throw new Error('Castillo inválido');
   if (unitType === 'rey') throw new Error('El Rey no se puede producir');
-  const cost = UNIT_COSTS[unitType];
-  if (cost === undefined) throw new Error('Tipo de ficha inválido');
+  if (UNIT_COSTS[unitType] === undefined) throw new Error('Tipo de ficha inválido');
+  const cost = troopCostFor(state, playerId, unitType); // con el descuento del cuartel
   // Grifo / Fénix / Dragón: solo tras derrotar a la criatura correspondiente.
   if (UNLOCKABLE_UNITS.includes(unitType) && !(player.unlockedUnits || []).includes(unitType)) {
     throw new Error('Todavía no desbloqueaste esa tropa: derrota a la criatura correspondiente');
@@ -665,7 +686,9 @@ function buildBarrier(state, playerId, castleId, x, y) {
   if (unitAt(state, x, y)) throw new Error('No podés construir una barrera debajo de una ficha');
 
   player.gold -= BARRIER_COST;
-  const maxHp = BARRIER_HP_BY_LEVEL[castle.level] || BARRIER_HP_BY_LEVEL[1];
+  // El nivel de la muralla lo da la mejora "murallas" del cuartel (Nv 1 sin cuartel).
+  const level = barrierLevelFor(state, playerId);
+  const maxHp = BARRIER_HP_BY_LEVEL[level] || BARRIER_HP_BY_LEVEL[1];
   tile.type = 'barrier';
   tile.owner = playerId;
   const barrier = {
@@ -674,13 +697,70 @@ function buildBarrier(state, playerId, castleId, x, y) {
     y: tile.y,
     owner: playerId,
     castleId: castle.id,
-    level: castle.level,
+    level,
     hp: maxHp,
     maxHp,
   };
   if (!Array.isArray(state.barriers)) state.barriers = [];
   state.barriers.push(barrier);
   return barrier;
+}
+
+// --- Cuartel ---
+// Solo en territorio propio, sin ficha encima, y máximo 1 por jugador.
+function buildBarracks(state, playerId, x, y) {
+  if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
+  const player = findPlayer(state, playerId);
+  if (!player) throw new Error('Jugador inválido');
+  if (barracksOf(state, playerId)) throw new Error('Ya tenés un cuartel (solo se permite 1)');
+  if (player.gold < BARRACKS_COST) throw new Error('Oro insuficiente');
+
+  const tile = tileAt(state, x, y);
+  if (!tile) throw new Error('Casilla fuera del tablero');
+  if (tile.type !== 'territory' || tile.owner !== playerId) {
+    throw new Error('Solo podés construir el cuartel en tu propio territorio');
+  }
+  if (unitAt(state, x, y)) throw new Error('No podés construir el cuartel debajo de una ficha');
+
+  player.gold -= BARRACKS_COST;
+  tile.type = 'barracks';
+  tile.owner = playerId;
+  const barracks = {
+    id: state.barracksIdCounter++, x, y, owner: playerId,
+    farmsTier: 0, wallsTier: 0, discountTier: 0,
+  };
+  if (!Array.isArray(state.barracks)) state.barracks = [];
+  state.barracks.push(barracks);
+  return barracks;
+}
+
+// track: 'farms' | 'walls' | 'discount'. Cada mejora tiene niveles con costo propio.
+function upgradeBarracks(state, playerId, track) {
+  if (!isPlayersTurn(state, playerId)) throw new Error('No es tu turno');
+  const player = findPlayer(state, playerId);
+  const up = BARRACKS_UPGRADES[track];
+  if (!player || !up) throw new Error('Mejora inválida');
+  const barracks = barracksOf(state, playerId);
+  if (!barracks) throw new Error('No tenés un cuartel');
+  const key = `${track}Tier`;
+  const tier = barracks[key];
+  if (tier >= up.costs.length) throw new Error('Esa mejora ya está al máximo');
+  const cost = up.costs[tier];
+  if (player.gold < cost) throw new Error('Oro insuficiente');
+
+  player.gold -= cost;
+  barracks[key] = tier + 1;
+
+  // Murallas: la mejora sube el nivel de TODAS las barreras del jugador.
+  if (track === 'walls') {
+    const level = 1 + barracks.wallsTier;
+    (state.barriers || []).filter((b) => b.owner === playerId).forEach((b) => {
+      b.level = level;
+      b.maxHp = BARRIER_HP_BY_LEVEL[level] || b.maxHp;
+      b.hp = b.maxHp;
+    });
+  }
+  return { track, tier: barracks[key], cost };
 }
 
 // La barrera desaparece: la casilla vuelve a ser territorio de su dueño.
@@ -901,6 +981,7 @@ function eliminatePlayer(state, player) {
   state.units = state.units.filter((u) => u.owner !== player.id);
   state.farms = state.farms.filter((f) => f.owner !== player.id);
   state.barriers = (state.barriers || []).filter((b) => b.owner !== player.id);
+  state.barracks = (state.barracks || []).filter((b) => b.owner !== player.id);
   state.castles.forEach((c) => {
     if (c.owner === player.id) {
       c.owner = null;
@@ -945,6 +1026,8 @@ function forceEndGame(state) {
 
 module.exports = {
   isPlayersTurn,
+  buildBarracks,
+  upgradeBarracks,
   collectGold,
   getReachableTiles,
   getBuildableFarmTiles,

@@ -21,6 +21,7 @@ const actions = require('./actions');
 
 const PORT = process.env.PORT || 3000;
 const TURN_TIME_MS = 45000; // tiempo máximo por turno
+const RECONNECT_GRACE_MS = 15000; // ventana para reconectar antes de rendirse automáticamente
 
 const app = express();
 const server = http.createServer(app);
@@ -30,6 +31,21 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- Estado de la sala única (fase 1: 1 sala fija) ---
 let state = null; // se crea cuando el líder define el tamaño de partida
+
+// --- Identidad de jugador desacoplada del socket.id ---
+// Cada cliente manda un token persistente (guardado en localStorage) al
+// conectar. Ese token, no el socket.id (que cambia en cada reconexión), es
+// lo que se usa como id de jugador en todo el juego. Así una reconexión
+// (refresh, wifi que se cae un instante, etc.) puede recuperar su ficha en
+// vez de perder la partida.
+const liveSocketByToken = new Map(); // token -> socket.id actual (solo si está conectado)
+const reconnectTimers = new Map(); // token -> { timeout, deadline }
+
+function clearReconnectTimer(token) {
+  const entry = reconnectTimers.get(token);
+  if (entry) clearTimeout(entry.timeout);
+  reconnectTimers.delete(token);
+}
 
 function serializeState(s) {
   if (!s) return null;
@@ -48,6 +64,8 @@ function serializeState(s) {
       castleId: p.castleId,
       phoenixRevived: p.phoenixRevived,
       surrendered: !!p.surrendered,
+      disconnected: !!p.disconnected,
+      reconnectDeadline: p.reconnectDeadline || null,
       upgrades: p.upgrades || null, // mejoras permanentes por criaturas derrotadas
       unlockedUnits: p.unlockedUnits || [], // tropas especiales desbloqueadas
       farmIncome: farmIncomeFor(s, p.id), // oro por granja (sube con el cuartel)
@@ -130,7 +148,7 @@ function broadcastState() {
 function registerPostGameChoice(socket, action) {
   if (!state || state.phase !== 'finished') return;
   if (!state.postGameChoices) state.postGameChoices = {};
-  state.postGameChoices[socket.id] = action;
+  state.postGameChoices[socket.playerToken] = action;
   broadcastState();
   maybeResetAfterGame();
 }
@@ -139,7 +157,8 @@ function maybeResetAfterGame() {
   if (!state || state.phase !== 'finished') return;
   if (state.players.length === 0) return;
   const allDecided = state.players.every((p) => {
-    const sock = io.sockets.sockets.get(p.id);
+    const liveSocketId = liveSocketByToken.get(p.id);
+    const sock = liveSocketId ? io.sockets.sockets.get(liveSocketId) : null;
     return !sock || (state.postGameChoices && state.postGameChoices[p.id]);
   });
   if (allDecided) {
@@ -200,13 +219,33 @@ function shuffle(arr) {
 }
 
 io.on('connection', (socket) => {
-  console.log(`[conexión] ${socket.id}`);
+  // El cliente manda un token persistente (uuid en localStorage). Si por
+  // algún motivo no lo manda (cliente viejo), usamos el socket.playerToken como
+  // antes: no habrá reconexión real, pero no rompe nada.
+  const token = (socket.handshake.auth && socket.handshake.auth.token) || socket.id;
+  socket.playerToken = token;
+  liveSocketByToken.set(token, socket.id);
+  console.log(`[conexión] ${socket.id} (token ${token})`);
+
+  // --- Reconexión: si este token ya tenía una ficha en una partida en curso
+  // y estaba en ventana de gracia (desconectado), lo recuperamos tal cual.
+  if (state && state.phase === 'playing') {
+    const existing = state.players.find((p) => p.id === token);
+    if (existing && existing.disconnected) {
+      clearReconnectTimer(token);
+      existing.disconnected = false;
+      existing.reconnectDeadline = null;
+      io.emit('action:log', { type: 'reconnect', event: 'reconnect', playerId: token });
+    }
+  }
 
   // Si ya existe una sala en fase de lobby con cupo libre, el jugador se une
   // automáticamente (con nombre y color por defecto, editables después).
-  if (state && state.phase === 'lobby' && state.players.length < state.maxPlayers) {
+  // Si el token ya estaba en la sala (refresh antes de empezar), no lo
+  // duplicamos.
+  if (state && state.phase === 'lobby' && !state.players.some((p) => p.id === token) && state.players.length < state.maxPlayers) {
     try {
-      addPlayer(state, socket.id, null);
+      addPlayer(state, token, null);
     } catch (err) {
       // sala llena justo en este instante: no pasa nada, queda como espectador
     }
@@ -228,15 +267,15 @@ io.on('connection', (socket) => {
       return;
     }
     state = createGameState(n);
-    state.leaderId = socket.id;
-    addPlayer(state, socket.id, null);
+    state.leaderId = socket.playerToken;
+    addPlayer(state, socket.playerToken, null);
     broadcastState();
   });
 
   socket.on('lobby:setName', (name) => {
     if (!state || state.phase !== 'lobby') return;
     try {
-      setPlayerName(state, socket.id, name);
+      setPlayerName(state, socket.playerToken, name);
       broadcastState();
     } catch (err) {
       socket.emit('error:message', err.message);
@@ -246,7 +285,7 @@ io.on('connection', (socket) => {
   socket.on('lobby:setColor', (color) => {
     if (!state || state.phase !== 'lobby') return;
     try {
-      setPlayerColor(state, socket.id, color);
+      setPlayerColor(state, socket.playerToken, color);
       broadcastState();
     } catch (err) {
       socket.emit('error:message', err.message);
@@ -256,7 +295,7 @@ io.on('connection', (socket) => {
   socket.on('lobby:setReady', (ready) => {
     if (!state || state.phase !== 'lobby') return;
     try {
-      setPlayerReady(state, socket.id, !!ready);
+      setPlayerReady(state, socket.playerToken, !!ready);
       broadcastState();
     } catch (err) {
       socket.emit('error:message', err.message);
@@ -265,7 +304,7 @@ io.on('connection', (socket) => {
 
   socket.on('lobby:startGame', () => {
     if (!state) return;
-    if (socket.id !== state.leaderId) {
+    if (socket.playerToken !== state.leaderId) {
       socket.emit('error:message', 'Solo el líder puede iniciar la partida.');
       return;
     }
@@ -284,7 +323,7 @@ io.on('connection', (socket) => {
   socket.on('action:getReachable', ({ unitId }) => {
     if (!state) return;
     const unit = state.units.find((u) => u.id === unitId);
-    if (!unit || unit.owner !== socket.id) {
+    if (!unit || unit.owner !== socket.playerToken) {
       socket.emit('error:message', 'Ficha inválida');
       return;
     }
@@ -301,9 +340,9 @@ io.on('connection', (socket) => {
     try {
       const unitBefore = state.units.find((u) => u.id === unitId);
       const unitType = unitBefore ? unitBefore.type : null;
-      const log = actions.moveUnit(state, socket.id, unitId, x, y);
+      const log = actions.moveUnit(state, socket.playerToken, unitId, x, y);
       broadcastState();
-      io.emit('action:log', { ...log, type: 'move', playerId: socket.id, unitType });
+      io.emit('action:log', { ...log, type: 'move', playerId: socket.playerToken, unitType });
       flushEvents();
       if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
     } catch (err) {
@@ -314,9 +353,9 @@ io.on('connection', (socket) => {
   socket.on('action:produce', ({ castleId, unitType }) => {
     if (!state) return;
     try {
-      const unit = actions.produceUnit(state, socket.id, castleId, unitType);
+      const unit = actions.produceUnit(state, socket.playerToken, castleId, unitType);
       broadcastState();
-      io.emit('action:log', { type: 'produce', playerId: socket.id, unitType: unit.type, castleId });
+      io.emit('action:log', { type: 'produce', playerId: socket.playerToken, unitType: unit.type, castleId });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -324,16 +363,16 @@ io.on('connection', (socket) => {
 
   socket.on('action:getBuildableFarmTiles', () => {
     if (!state) return;
-    const tiles = actions.getBuildableFarmTiles(state, socket.id);
+    const tiles = actions.getBuildableFarmTiles(state, socket.playerToken);
     socket.emit('action:buildableFarmTiles', { tiles });
   });
 
   socket.on('action:buildFarm', ({ castleId, x, y }) => {
     if (!state) return;
     try {
-      actions.buildFarm(state, socket.id, castleId, x, y);
+      actions.buildFarm(state, socket.playerToken, castleId, x, y);
       broadcastState();
-      io.emit('action:log', { type: 'buildFarm', playerId: socket.id, castleId });
+      io.emit('action:log', { type: 'buildFarm', playerId: socket.playerToken, castleId });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -341,16 +380,16 @@ io.on('connection', (socket) => {
 
   socket.on('action:getBuildableBarrierTiles', () => {
     if (!state) return;
-    const tiles = actions.getBuildableBarrierTiles(state, socket.id);
+    const tiles = actions.getBuildableBarrierTiles(state, socket.playerToken);
     socket.emit('action:buildableBarrierTiles', { tiles });
   });
 
   socket.on('action:buildBarrier', ({ castleId, x, y }) => {
     if (!state) return;
     try {
-      actions.buildBarrier(state, socket.id, castleId, x, y);
+      actions.buildBarrier(state, socket.playerToken, castleId, x, y);
       broadcastState();
-      io.emit('action:log', { type: 'buildBarrier', playerId: socket.id, castleId });
+      io.emit('action:log', { type: 'buildBarrier', playerId: socket.playerToken, castleId });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -359,16 +398,16 @@ io.on('connection', (socket) => {
   // Cuartel: mismas casillas que la barrera (territorio propio sin ficha).
   socket.on('action:getBuildableBarracksTiles', () => {
     if (!state) return;
-    const tiles = actions.getBuildableBarrierTiles(state, socket.id);
+    const tiles = actions.getBuildableBarrierTiles(state, socket.playerToken);
     socket.emit('action:buildableBarracksTiles', { tiles });
   });
 
   socket.on('action:buildBarracks', ({ x, y }) => {
     if (!state) return;
     try {
-      actions.buildBarracks(state, socket.id, x, y);
+      actions.buildBarracks(state, socket.playerToken, x, y);
       broadcastState();
-      io.emit('action:log', { type: 'buildBarracks', playerId: socket.id });
+      io.emit('action:log', { type: 'buildBarracks', playerId: socket.playerToken });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -377,9 +416,9 @@ io.on('connection', (socket) => {
   socket.on('action:upgradeBarracks', ({ track }) => {
     if (!state) return;
     try {
-      const res = actions.upgradeBarracks(state, socket.id, track);
+      const res = actions.upgradeBarracks(state, socket.playerToken, track);
       broadcastState();
-      io.emit('action:log', { type: 'upgradeBarracks', playerId: socket.id, track: res.track, tier: res.tier });
+      io.emit('action:log', { type: 'upgradeBarracks', playerId: socket.playerToken, track: res.track, tier: res.tier });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -388,7 +427,7 @@ io.on('connection', (socket) => {
   socket.on('action:attackBarrier', ({ unitId, barrierId }) => {
     if (!state) return;
     try {
-      const log = actions.attackBarrier(state, socket.id, unitId, barrierId);
+      const log = actions.attackBarrier(state, socket.playerToken, unitId, barrierId);
       broadcastState();
       io.emit('action:log', log);
       flushEvents();
@@ -401,9 +440,9 @@ io.on('connection', (socket) => {
   socket.on('action:upgradeCastle', ({ castleId }) => {
     if (!state) return;
     try {
-      const castle = actions.upgradeCastle(state, socket.id, castleId);
+      const castle = actions.upgradeCastle(state, socket.playerToken, castleId);
       broadcastState();
-      io.emit('action:log', { type: 'upgradeCastle', playerId: socket.id, castleId, newLevel: castle.level });
+      io.emit('action:log', { type: 'upgradeCastle', playerId: socket.playerToken, castleId, newLevel: castle.level });
     } catch (err) {
       socket.emit('error:message', err.message);
     }
@@ -412,7 +451,7 @@ io.on('connection', (socket) => {
   socket.on('action:endTurn', () => {
     if (!state) return;
     try {
-      const result = actions.endTurn(state, socket.id);
+      const result = actions.endTurn(state, socket.playerToken);
       broadcastState();
       emitTurnResult(result);
       flushEvents();
@@ -426,9 +465,9 @@ io.on('connection', (socket) => {
   socket.on('action:surrender', () => {
     if (!state) return;
     try {
-      const result = actions.surrenderPlayer(state, socket.id);
+      const result = actions.surrenderPlayer(state, socket.playerToken);
       broadcastState();
-      io.emit('action:log', { type: 'surrender', event: 'surrender', playerId: socket.id });
+      io.emit('action:log', { type: 'surrender', event: 'surrender', playerId: socket.playerToken });
       emitTurnResult(result);
       flushEvents();
       if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
@@ -440,7 +479,7 @@ io.on('connection', (socket) => {
   // Solo el líder puede terminar la partida (queda sin ganador).
   socket.on('game:end', () => {
     if (!state) return;
-    if (socket.id !== state.leaderId) {
+    if (socket.playerToken !== state.leaderId) {
       socket.emit('error:message', 'Solo el líder puede terminar la partida.');
       return;
     }
@@ -459,7 +498,7 @@ io.on('connection', (socket) => {
   socket.on('action:attackCreature', ({ unitId, creatureId }) => {
     if (!state) return;
     try {
-      const log = actions.attackCreature(state, socket.id, unitId, creatureId);
+      const log = actions.attackCreature(state, socket.playerToken, unitId, creatureId);
       broadcastState();
       io.emit('action:log', log);
       flushEvents();
@@ -472,7 +511,7 @@ io.on('connection', (socket) => {
   socket.on('action:attackUnit', ({ unitId, targetId }) => {
     if (!state) return;
     try {
-      const log = actions.attackUnit(state, socket.id, unitId, targetId);
+      const log = actions.attackUnit(state, socket.playerToken, unitId, targetId);
       broadcastState();
       io.emit('action:log', log);
       flushEvents();
@@ -483,13 +522,24 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log(`[desconexión] ${socket.id}`);
+    const token = socket.playerToken;
+    console.log(`[desconexión] ${token}`);
+
+    // Si ya hay una conexión más nueva viva para este mismo token (p. ej.
+    // esta era una pestaña vieja que quedó colgada tras un refresh), no
+    // tratamos esto como que el jugador se fue.
+    if (liveSocketByToken.get(token) === socket.id) {
+      liveSocketByToken.delete(token);
+    } else {
+      return;
+    }
+
     if (!state) return;
 
     if (state.phase === 'lobby') {
       // Mientras se arma la partida, un jugador que se va libera su cupo y su color.
-      removePlayer(state, socket.id);
-      if (state.leaderId === socket.id) {
+      removePlayer(state, token);
+      if (state.leaderId === token) {
         // El líder se fue: el siguiente en la sala pasa a liderar, o se
         // desarma la sala si no queda nadie.
         state.leaderId = state.players.length > 0 ? state.players[0].id : null;
@@ -509,30 +559,56 @@ io.on('connection', (socket) => {
     if (!state) return;
 
     if (state.phase === 'playing') {
-      // Partida en curso: quien se desconecta se rinde automáticamente, así
-      // el turno nunca queda trabado esperando a un jugador que ya no está.
-      const player = state.players.find((p) => p.id === socket.id);
-      if (player && player.alive) {
-        try {
-          const result = actions.surrenderPlayer(state, socket.id);
-          io.emit('action:log', { type: 'disconnect', event: 'disconnect', playerId: socket.id });
-          emitTurnResult(result);
-          flushEvents();
-          if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
-        } catch (err) {
-          console.error('[desconexión] error al rendir jugador:', err.message);
-        }
+      // Partida en curso: en vez de rendir al toque, se da una ventana de
+      // RECONNECT_GRACE_MS para que el mismo cliente (mismo token) vuelva.
+      // Solo si no reconecta a tiempo se rinde automáticamente.
+      const player = state.players.find((p) => p.id === token);
+      if (player && player.alive && !player.surrendered) {
+        player.disconnected = true;
+        player.reconnectDeadline = Date.now() + RECONNECT_GRACE_MS;
+        io.emit('action:log', { type: 'playerDisconnected', event: 'playerDisconnected', playerId: token });
+        broadcastState();
+
+        clearReconnectTimer(token);
+        const timeout = setTimeout(() => {
+          reconnectTimers.delete(token);
+          if (!state) return;
+          const p = state.players.find((pp) => pp.id === token);
+          // Si ya reconectó (se limpió el flag) o ya no está vivo, no hacer nada.
+          if (!p || !p.disconnected) return;
+          try {
+            const result = actions.surrenderPlayer(state, token);
+            io.emit('action:log', { type: 'disconnect', event: 'disconnect', playerId: token });
+            emitTurnResult(result);
+            flushEvents();
+            // Recién ahora, si seguía sin volver, pasa el liderazgo si hacía falta.
+            if (state.leaderId === token) {
+              const nextLeader = state.players.find((pp) => pp.alive && !pp.disconnected && pp.id !== token);
+              state.leaderId = nextLeader ? nextLeader.id : null;
+            }
+            broadcastState();
+            if (state.phase === 'finished') io.emit('game:over', { winner: state.winner });
+          } catch (err) {
+            console.error('[reconexión] error al rendir jugador tras timeout:', err.message);
+          }
+        }, RECONNECT_GRACE_MS);
+        reconnectTimers.set(token, { timeout, deadline: player.reconnectDeadline });
+
+        // Durante la ventana de gracia no tocamos el liderazgo: si el líder
+        // reconecta a tiempo, sigue siendo líder sin sobresaltos.
+        return;
       }
     }
 
-    // Si se fue el líder, el mando pasa a otro jugador vivo.
-    if (state.leaderId === socket.id) {
-      const nextLeader = state.players.find((p) => p.alive && p.id !== socket.id);
+    // Si se fue el líder (y no está en ventana de gracia), el mando pasa a otro jugador vivo.
+    if (state.leaderId === token) {
+      const nextLeader = state.players.find((p) => p.alive && !p.disconnected && p.id !== token);
       state.leaderId = nextLeader ? nextLeader.id : null;
     }
 
-    // Sin nadie conectado, se libera la sala para poder crear otra partida.
-    if (io.of('/').sockets.size === 0) {
+    // Sin nadie conectado (y sin timers de reconexión pendientes), se libera
+    // la sala para poder crear otra partida.
+    if (io.of('/').sockets.size === 0 && reconnectTimers.size === 0) {
       clearTurnTimer();
       state = null;
     }

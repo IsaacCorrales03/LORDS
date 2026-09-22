@@ -1,7 +1,25 @@
 // public/app.js
 // Cliente: conexión socket, lobby (líder + sala de espera) y juego (render SVG + interacción).
 
-const socket = io();
+// Token persistente: identifica a este jugador entre reconexiones (refresh,
+// wifi que se corta un instante, etc). El servidor lo usa como id de
+// jugador en vez del socket.id, que cambia en cada reconexión.
+function getOrCreateClientToken() {
+  const KEY = 'astera_client_token';
+  try {
+    let t = localStorage.getItem(KEY);
+    if (!t) {
+      t = (crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      localStorage.setItem(KEY, t);
+    }
+    return t;
+  } catch (err) {
+    // localStorage no disponible (modo privado estricto, etc.): token de sesión nomás.
+    return `t-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+const CLIENT_TOKEN = getOrCreateClientToken();
+const socket = io({ auth: { token: CLIENT_TOKEN } });
 
 // --- Constantes espejo del servidor (solo para mostrar costos/íconos en UI) ---
 const UNIT_LABELS = {
@@ -366,7 +384,7 @@ let matchElapsedBaseAt = null;
 // ================= CONEXIÓN =================
 
 socket.on('connect', () => {
-  myId = socket.id;
+  myId = CLIENT_TOKEN;
   createStatus.textContent = 'Si sos la primera persona acá, definí el tamaño y creá la partida.';
 });
 
@@ -642,11 +660,15 @@ function renderPlayers(state) {
     const card = document.createElement('div');
     card.className = 'player-card' + (isCurrent ? ' current-turn' : '') + (!p.alive ? ' dead' : '');
     card.style.setProperty('--card-color', PLAYER_COLOR_HEX[p.color] || '#666');
+    const reconnectSecs = p.disconnected && p.reconnectDeadline
+      ? Math.max(0, Math.ceil((p.reconnectDeadline - (state.serverNow || Date.now())) / 1000))
+      : null;
     card.innerHTML = `
       <div class="name-row">
         <span class="swatch" style="background:${PLAYER_COLOR_HEX[p.color] || '#666'}"></span>
         <span>${escapeHtml(p.name)}${p.id === myId ? ' (vos)' : ''}</span>
         ${p.surrendered ? '<span class="surrender-tag">Rendido</span>' : ''}
+        ${p.disconnected ? `<span class="surrender-tag reconnect-tag">Reconectando… ${reconnectSecs}s</span>` : ''}
       </div>
       <div class="stats">
         <span title="Oro"><svg class="stat-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg> <b class="gold-value" data-player="${p.id}">${castleOrZero(p)}</b></span>
@@ -764,6 +786,14 @@ function formatDuration(ms) {
 setInterval(() => {
   if (matchElapsedBaseMs == null || !matchTimerEl) { if (matchTimerEl) matchTimerEl.textContent = ''; return; }
   matchTimerEl.textContent = formatDuration(matchElapsedBaseMs + (Date.now() - matchElapsedBaseAt));
+}, 1000);
+
+// Refresca los "Reconectando… Ns" de la lista de jugadores cada segundo,
+// sin esperar al próximo state:update del servidor.
+setInterval(() => {
+  if (!currentState || currentState.phase !== 'playing') return;
+  const anyDisconnected = currentState.players.some((p) => p.disconnected);
+  if (anyDisconnected) renderPlayers(currentState);
 }, 1000);
 
 function renderTurnInfo(state) {

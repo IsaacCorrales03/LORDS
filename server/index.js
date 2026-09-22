@@ -20,7 +20,7 @@ const {
 const actions = require('./actions');
 
 const PORT = process.env.PORT || 3000;
-const TURN_TIME_MS = 45000; // tiempo máximo por turno
+const TURN_TIME_MS = 90000; // tiempo máximo por turno
 const RECONNECT_GRACE_MS = 15000; // ventana para reconectar antes de rendirse automáticamente
 
 const app = express();

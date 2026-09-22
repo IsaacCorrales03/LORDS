@@ -1432,3 +1432,38 @@ div.barracks-row .action-btn { flex-shrink: 0; min-width: 84px; }
 }
 .harvest-stalk { fill: none; stroke: #f2d36b; stroke-width: 1.6; stroke-linecap: round; opacity: 0.9; transform-box: fill-box; transform-origin: bottom center; animation: harvest-sway 2.6s ease-in-out infinite; filter: drop-shadow(0 0 3px rgba(230, 192, 74, 0.7)); }
 @keyframes harvest-sway { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+
+
+.castle-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.castle-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--ink-dim, #9fb0c0);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 4px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.castle-tab:hover {
+  color: var(--ink, #e8edf2);
+}
+
+.castle-tab.active {
+  color: var(--gold-bright, #f2c46d);
+  border-bottom-color: var(--gold-bright, #f2c46d);
+}
+
+.castle-tab-panel {
+  display: none;
+}

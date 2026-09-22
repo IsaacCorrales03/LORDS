@@ -338,6 +338,22 @@ const btnBuildBarracks = btnBuildBarrier.cloneNode(true);
 btnBuildBarracks.id = 'btnBuildBarracks';
 btnBuildBarrier.after(btnBuildBarracks);
 const btnUpgrade = document.getElementById('btnUpgrade');
+const castleTabs = document.getElementById('castleTabs');
+const tabPanels = {
+  train: document.getElementById('tabPanelTrain'),
+  build: document.getElementById('tabPanelBuild'),
+  upgrade: document.getElementById('tabPanelUpgrade'),
+};
+let activeCastleTab = 'train';
+function setCastleTab(tab) {
+  activeCastleTab = tab;
+  castleTabs.querySelectorAll('.castle-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  Object.keys(tabPanels).forEach((k) => { tabPanels[k].style.display = k === tab ? 'block' : 'none'; });
+}
+castleTabs.querySelectorAll('.castle-tab').forEach((btn) => {
+  btn.addEventListener('click', () => { SFX.play('ui_click'); setCastleTab(btn.dataset.tab); });
+});
+setCastleTab('train');
 const btnEndTurn = document.getElementById('btnEndTurn');
 const toast = document.getElementById('toast');
 const gameoverOverlay = document.getElementById('gameover-overlay');

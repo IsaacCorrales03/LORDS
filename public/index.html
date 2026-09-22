@@ -114,11 +114,24 @@
       </div>
 
       <div id="castleActions" style="display:none;">
-        <p class="section-title">Castillo</p>
-        <div class="produce-grid" id="produceGrid"></div>
-        <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
-          <button class="action-btn" id="btnBuildFarm"><span>Construir granja</span><span class="cost"></span></button>
-          <button class="action-btn" id="btnBuildBarrier"><span>Construir barrera</span><span class="cost"></span></button>
+        <div class="castle-tabs" id="castleTabs">
+          <button class="castle-tab" id="tabBtnTrain" data-tab="train">Entrenar</button>
+          <button class="castle-tab" id="tabBtnBuild" data-tab="build">Construir</button>
+          <button class="castle-tab" id="tabBtnUpgrade" data-tab="upgrade">Mejorar</button>
+        </div>
+
+        <div class="castle-tab-panel" id="tabPanelTrain">
+          <div class="produce-grid" id="produceGrid"></div>
+        </div>
+
+        <div class="castle-tab-panel" id="tabPanelBuild">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <button class="action-btn" id="btnBuildFarm"><span>Construir granja</span><span class="cost"></span></button>
+            <button class="action-btn" id="btnBuildBarrier"><span>Construir barrera</span><span class="cost"></span></button>
+          </div>
+        </div>
+
+        <div class="castle-tab-panel" id="tabPanelUpgrade">
           <button class="action-btn" id="btnUpgrade"><span>Mejorar castillo</span><span class="cost"></span></button>
         </div>
       </div>
